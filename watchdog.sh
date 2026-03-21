@@ -73,10 +73,19 @@ if [[ "$amnezia_enabled" == "true" ]]; then
     fi
 fi
 
-# Ротация лога watchdog (>1MB → обрезаем до 500 строк)
-if [[ -f "$WATCHDOG_LOG" ]]; then
-    local_size=$(stat -c%s "$WATCHDOG_LOG" 2>/dev/null || stat -f%z "$WATCHDOG_LOG" 2>/dev/null || echo "0")
-    if [[ "$local_size" -gt 1048576 ]]; then
-        tail -500 "$WATCHDOG_LOG" > "${WATCHDOG_LOG}.tmp" && mv "${WATCHDOG_LOG}.tmp" "$WATCHDOG_LOG"
+# Ротация логов (>1MB → обрезаем до 500 строк)
+_rotate_log() {
+    local log="$1"
+    [[ ! -f "$log" ]] && return
+    local fsize
+    fsize=$(stat -c%s "$log" 2>/dev/null || stat -f%z "$log" 2>/dev/null || echo "0")
+    if [[ "$fsize" -gt 1048576 ]]; then
+        tail -500 "$log" > "${log}.tmp" && mv "${log}.tmp" "$log"
     fi
-fi
+}
+
+_rotate_log "$WATCHDOG_LOG"
+_rotate_log "$MAIN_LOG"
+_rotate_log "/var/log/xray/access.log"
+_rotate_log "/var/log/xray/error.log"
+_rotate_log "/var/log/hysteria/hysteria.log"

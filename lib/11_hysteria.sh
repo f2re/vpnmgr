@@ -86,6 +86,8 @@ ExecStart=/usr/local/bin/hysteria server -c /etc/hysteria/config.yaml
 Restart=on-failure
 RestartSec=3s
 LimitNOFILE=65536
+StandardOutput=append:/var/log/hysteria/hysteria.log
+StandardError=append:/var/log/hysteria/hysteria.log
 
 [Install]
 WantedBy=multi-user.target

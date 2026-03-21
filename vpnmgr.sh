@@ -42,7 +42,10 @@ case "${1:-}" in
     --check-cert)
         mkdir -p "$LOGS_DIR"
         touch "$MAIN_LOG"
-        _cert_path=$(jq -r '.cert_path // ""' "$SERVER_JSON" 2>/dev/null || echo "")
+        set +e
+        _cert_path=$(jq -r '.cert_path // ""' "$SERVER_JSON" 2>/dev/null)
+        [[ -z "$_cert_path" ]] && _cert_path=""
+        set -e
         if [[ -n "$_cert_path" && -f "$_cert_path" ]]; then
             _expiry=$(openssl x509 -enddate -noout -in "$_cert_path" 2>/dev/null | cut -d= -f2)
             _expiry_epoch=$(date -d "$_expiry" +%s 2>/dev/null || echo "0")
@@ -145,6 +148,7 @@ main_menu() {
 
 init() {
     mkdir -p "$DATA_DIR" "$LOGS_DIR" "$BACKUPS_DIR" "$TEMPLATES_DIR"
+    mkdir -p /var/log/xray /var/log/hysteria 2>/dev/null || true
     touch "$MAIN_LOG"
 
     # Инициализация protocols.json если не существует

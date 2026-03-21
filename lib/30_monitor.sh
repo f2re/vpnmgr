@@ -60,6 +60,44 @@ monitor_status() {
         "Статус системы"
 }
 
+# Читает лог: сначала файл, потом journalctl как fallback
+_read_log() {
+    local log_file="$1"
+    local service="${2:-}"
+    local lines="${3:-80}"
+
+    # Пробуем файл
+    if [[ -f "$log_file" && -s "$log_file" ]]; then
+        tail -"$lines" "$log_file" 2>/dev/null
+        return 0
+    fi
+
+    # Fallback на journalctl для systemd-сервисов
+    if [[ -n "$service" ]] && command -v journalctl >/dev/null 2>&1; then
+        local jlog
+        jlog=$(journalctl -u "$service" -n "$lines" --no-pager 2>/dev/null)
+        if [[ -n "$jlog" ]]; then
+            echo "(из journalctl -u $service)"
+            echo ""
+            echo "$jlog"
+            return 0
+        fi
+    fi
+
+    # Файл не существует или пуст
+    if [[ ! -f "$log_file" ]]; then
+        echo "(лог-файл не найден: $log_file)"
+    else
+        echo "(лог-файл пуст)"
+    fi
+    if [[ -n "$service" ]]; then
+        echo ""
+        echo "Для просмотра логов сервиса:"
+        echo "  journalctl -u $service -n 50 --no-pager"
+    fi
+    return 1
+}
+
 monitor_logs() {
     while true; do
         local choice
@@ -70,24 +108,27 @@ monitor_logs() {
             "4" "Логи watchdog" \
             "0" "Назад") || break
 
-        local log_file
+        local log_file service_name title
         case "$choice" in
-            1) log_file="$MAIN_LOG" ;;
-            2) log_file="/var/log/xray/error.log" ;;
-            3) log_file="/var/log/hysteria/hysteria.log" ;;
-            4) log_file="$LOGS_DIR/watchdog.log" ;;
+            1) log_file="$MAIN_LOG"
+               service_name=""
+               title="vpnmgr.log" ;;
+            2) log_file="/var/log/xray/error.log"
+               service_name="$XRAY_SERVICE"
+               title="Xray" ;;
+            3) log_file="/var/log/hysteria/hysteria.log"
+               service_name="$HYSTERIA_SERVICE"
+               title="Hysteria 2" ;;
+            4) log_file="$LOGS_DIR/watchdog.log"
+               service_name=""
+               title="watchdog.log" ;;
             0) return ;;
             *) continue ;;
         esac
 
-        if [[ ! -f "$log_file" ]]; then
-            ui_msgbox "Лог-файл не найден:\n$log_file" "Логи"
-            continue
-        fi
-
         local content
-        content=$(tail -80 "$log_file" 2>/dev/null || echo "(пусто)")
-        ui_msgbox "$content" "Лог: $(basename "$log_file") (последние 80 строк)"
+        content=$(_read_log "$log_file" "$service_name" 80)
+        ui_msgbox "$content" "Лог: $title (последние 80 строк)"
     done
 }
 
@@ -132,27 +173,29 @@ monitor_check_blocks() {
     info+="Тестовый URL: $test_url\n\n"
 
     # Прямое соединение
-    local direct_status
-    if curl -s --max-time 10 -o /dev/null -w "%{http_code}" "$test_url" 2>/dev/null | grep -q "200"; then
-        direct_status="OK (200)"
+    local direct_code
+    direct_code=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" "$test_url" 2>/dev/null || echo "000")
+    if [[ "$direct_code" == "200" ]]; then
+        info+="Прямое соединение: OK ($direct_code)\n"
     else
-        direct_status="НЕДОСТУПЕН"
+        info+="Прямое соединение: НЕДОСТУПЕН (код $direct_code)\n"
     fi
-    info+="Прямое соединение: $direct_status\n"
 
-    # Через SOCKS5 (если включён)
-    if [[ -f "$XRAY_CONFIG" ]]; then
+    # Через SOCKS5 — только если Xray запущен и SOCKS5 включён
+    if xray_is_running 2>/dev/null && socks5_is_enabled 2>/dev/null; then
         local socks_port
-        socks_port=$(jq -r '.inbounds[] | select(.protocol == "socks") | .port // empty' "$XRAY_CONFIG" 2>/dev/null)
+        socks_port=$(socks5_get_port)
         if [[ -n "$socks_port" ]]; then
-            local socks_status
-            if curl -s --max-time 10 --socks5 "127.0.0.1:$socks_port" -o /dev/null -w "%{http_code}" "$test_url" 2>/dev/null | grep -q "200"; then
-                socks_status="OK (200)"
+            local socks_code
+            socks_code=$(curl -s --max-time 10 --socks5 "127.0.0.1:$socks_port" -o /dev/null -w "%{http_code}" "$test_url" 2>/dev/null || echo "000")
+            if [[ "$socks_code" == "200" ]]; then
+                info+="Через SOCKS5 (:$socks_port): OK ($socks_code)\n"
             else
-                socks_status="НЕДОСТУПЕН"
+                info+="Через SOCKS5 (:$socks_port): НЕДОСТУПЕН (код $socks_code)\n"
             fi
-            info+="Через SOCKS5 (:$socks_port): $socks_status\n"
         fi
+    elif socks5_is_enabled 2>/dev/null; then
+        info+="SOCKS5: Xray не запущен\n"
     fi
 
     ui_msgbox "$info" "Проверка блокировок"

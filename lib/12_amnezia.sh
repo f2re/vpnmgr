@@ -67,9 +67,21 @@ _amnezia_install_debian() {
     echo "Установка зависимостей для сборки..."
     echo "XXX"
 
-    if ! apt-get install -y -qq build-essential dkms linux-headers-$(uname -r) git pkg-config; then
-        log_error "AmneziaWG: не удалось установить зависимости сборки"
+    # Устанавливаем базовые зависимости без linux-headers
+    if ! apt-get install -y -qq build-essential dkms git pkg-config; then
+        log_error "AmneziaWG: не удалось установить базовые зависимости"
         exit 1
+    fi
+
+    # Пробуем установить linux-headers: сначала точную версию, потом метапакет
+    local _kr
+    _kr=$(uname -r)
+    if ! apt-get install -y -qq "linux-headers-${_kr}" 2>/dev/null; then
+        log_warn "Пакет linux-headers-${_kr} не найден, пробуем метапакет linux-headers-$(dpkg --print-architecture)"
+        if ! apt-get install -y -qq "linux-headers-$(dpkg --print-architecture)" 2>/dev/null; then
+            log_error "AmneziaWG: не удалось установить linux-headers (нужны для сборки модуля ядра)"
+            exit 1
+        fi
     fi
 
     echo "20"
