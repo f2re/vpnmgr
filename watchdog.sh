@@ -60,6 +60,18 @@ check_service() {
 check_service "$XRAY_SERVICE"     "Xray"       "xray"       || true
 check_service "$HYSTERIA_SERVICE" "Hysteria 2" "hysteria2"  || true
 
+# 3proxy (SOCKS5)
+socks5_enabled=$(jq -r '.socks5.enabled // false' "$PROTOCOLS_JSON" 2>/dev/null || echo "false")
+if [[ "$socks5_enabled" == "true" ]]; then
+    check_service "3proxy" "3proxy (SOCKS5)" "socks5" || true
+fi
+
+# sing-box
+singbox_enabled=$(jq -r '.singbox.enabled // false' "$PROTOCOLS_JSON" 2>/dev/null || echo "false")
+if [[ "$singbox_enabled" == "true" ]]; then
+    check_service "sing-box" "sing-box" "singbox" || true
+fi
+
 # AmneziaWG — проверяем через ip link
 amnezia_enabled=$(jq -r '.amneziawg.enabled // false' "$PROTOCOLS_JSON" 2>/dev/null || echo "false")
 if [[ "$amnezia_enabled" == "true" ]]; then
@@ -89,3 +101,5 @@ _rotate_log "$MAIN_LOG"
 _rotate_log "/var/log/xray/access.log"
 _rotate_log "/var/log/xray/error.log"
 _rotate_log "/var/log/hysteria/hysteria.log"
+_rotate_log "/var/log/3proxy/3proxy.log"
+_rotate_log "/var/log/sing-box/sing-box.log"

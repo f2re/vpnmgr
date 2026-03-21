@@ -28,10 +28,12 @@ _amnezia_status_line() {
 }
 
 monitor_status() {
-    local xray_line hysteria_line amnezia_line
+    local xray_line hysteria_line amnezia_line socks5_line singbox_line
     xray_line=$(_service_status_line    "$XRAY_SERVICE"     "VLESS+XHTTP (Xray)")
     hysteria_line=$(_service_status_line "$HYSTERIA_SERVICE" "Hysteria 2        ")
     amnezia_line=$(_amnezia_status_line)
+    socks5_line=$(_service_status_line   "3proxy"           "SOCKS5 (3proxy)   ")
+    singbox_line=$(_service_status_line  "sing-box"         "sing-box          ")
 
     local uptime_info
     uptime_info=$(uptime -p 2>/dev/null \
@@ -56,7 +58,7 @@ monitor_status() {
         last_backup=$(basename "$latest_bak" .tar.gz | tr '_' ' ')
     fi
 
-    ui_msgbox "=== Статус сервисов ===\n\n$xray_line\n$hysteria_line\n$amnezia_line\n\n=== Система ===\n\n  IP:          $server_ip\n  Аптайм:     $uptime_info\n  Диск:       $disk_info\n  RAM:        $mem_info\n  Бэкап:      $last_backup" \
+    ui_msgbox "=== Статус сервисов ===\n\n$xray_line\n$hysteria_line\n$amnezia_line\n$socks5_line\n$singbox_line\n\n=== Система ===\n\n  IP:          $server_ip\n  Аптайм:     $uptime_info\n  Диск:       $disk_info\n  RAM:        $mem_info\n  Бэкап:      $last_backup" \
         "Статус системы"
 }
 
@@ -105,7 +107,9 @@ monitor_logs() {
             "1" "Логи vpnmgr" \
             "2" "Логи Xray" \
             "3" "Логи Hysteria 2" \
-            "4" "Логи watchdog" \
+            "4" "Логи 3proxy (SOCKS5)" \
+            "5" "Логи sing-box" \
+            "6" "Логи watchdog" \
             "0" "Назад") || break
 
         local log_file service_name title
@@ -119,7 +123,13 @@ monitor_logs() {
             3) log_file="/var/log/hysteria/hysteria.log"
                service_name="$HYSTERIA_SERVICE"
                title="Hysteria 2" ;;
-            4) log_file="$LOGS_DIR/watchdog.log"
+            4) log_file="/var/log/3proxy/3proxy.log"
+               service_name="3proxy"
+               title="3proxy (SOCKS5)" ;;
+            5) log_file="/var/log/sing-box/sing-box.log"
+               service_name="sing-box"
+               title="sing-box" ;;
+            6) log_file="$LOGS_DIR/watchdog.log"
                service_name=""
                title="watchdog.log" ;;
             0) return ;;
@@ -160,6 +170,24 @@ monitor_connections() {
         info+="AmneziaWG: $awg_peers подключённых пиров\n"
     else
         info+="AmneziaWG: не запущен\n"
+    fi
+
+    # 3proxy (SOCKS5)
+    if systemctl is-active --quiet "3proxy" 2>/dev/null; then
+        local s5_conn
+        s5_conn=$(ss -tnp 2>/dev/null | grep -c 3proxy || echo "0")
+        info+="SOCKS5 (3proxy): $s5_conn соединений\n"
+    else
+        info+="SOCKS5 (3proxy): не запущен\n"
+    fi
+
+    # sing-box
+    if systemctl is-active --quiet "sing-box" 2>/dev/null; then
+        local sb_conn
+        sb_conn=$(ss -tnp 2>/dev/null | grep -c sing-box || echo "0")
+        info+="sing-box: $sb_conn соединений\n"
+    else
+        info+="sing-box: не запущен\n"
     fi
 
     ui_msgbox "=== Активные соединения ===\n\n$info" "Соединения"
@@ -204,17 +232,21 @@ monitor_check_blocks() {
 monitor_services_manage() {
     while true; do
         # Актуальный статус
-        local xray_st hysteria_st amnezia_st
+        local xray_st hysteria_st amnezia_st socks5_st singbox_st
         xray_st=$(_service_status_line    "$XRAY_SERVICE"     "VLESS+XHTTP (Xray)")
         hysteria_st=$(_service_status_line "$HYSTERIA_SERVICE" "Hysteria 2        ")
         amnezia_st=$(_amnezia_status_line)
+        socks5_st=$(_service_status_line   "3proxy"           "SOCKS5 (3proxy)   ")
+        singbox_st=$(_service_status_line  "sing-box"         "sing-box          ")
 
         local choice
-        choice=$(ui_menu "Управление сервисами\n\n$xray_st\n$hysteria_st\n$amnezia_st" \
+        choice=$(ui_menu "Управление сервисами\n\n$xray_st\n$hysteria_st\n$amnezia_st\n$socks5_st\n$singbox_st" \
             "1" "Перезапустить Xray" \
             "2" "Перезапустить Hysteria 2" \
             "3" "Перезапустить AmneziaWG" \
-            "4" "Перезапустить все" \
+            "4" "Перезапустить 3proxy" \
+            "5" "Перезапустить sing-box" \
+            "6" "Перезапустить все" \
             "c" "Показать команды (для ручного запуска)" \
             "0" "Назад") || break
 
@@ -242,10 +274,26 @@ monitor_services_manage() {
                 fi
                 ;;
             4)
+                if systemctl restart "3proxy" 2>/dev/null; then
+                    ui_success "3proxy перезапущен."
+                else
+                    ui_error "Не удалось перезапустить 3proxy.\n\nПроверьте: journalctl -u 3proxy -n 30 --no-pager"
+                fi
+                ;;
+            5)
+                if systemctl restart "sing-box" 2>/dev/null; then
+                    ui_success "sing-box перезапущен."
+                else
+                    ui_error "Не удалось перезапустить sing-box.\n\nПроверьте: journalctl -u sing-box -n 30 --no-pager"
+                fi
+                ;;
+            6)
                 systemctl restart "$XRAY_SERVICE"     2>/dev/null || true
                 systemctl restart "$HYSTERIA_SERVICE"  2>/dev/null || true
                 awg-quick down awg0 2>/dev/null || true
                 awg-quick up   awg0 2>/dev/null || true
+                systemctl restart "3proxy"   2>/dev/null || true
+                systemctl restart "sing-box" 2>/dev/null || true
                 ui_success "Сервисы перезапущены."
                 ;;
             c)
@@ -272,10 +320,24 @@ monitor_services_manage() {
   Стоп:        awg-quick down awg0
   Логи:        journalctl -u awg-quick@awg0 -n 50 --no-pager
 
+=== Команды для 3proxy (SOCKS5) ===
+
+  Статус:      systemctl status 3proxy
+  Перезапуск:  systemctl restart 3proxy
+  Стоп:        systemctl stop 3proxy
+  Логи:        journalctl -u 3proxy -n 50 --no-pager
+
+=== Команды для sing-box ===
+
+  Статус:      systemctl status sing-box
+  Перезапуск:  systemctl restart sing-box
+  Стоп:        systemctl stop sing-box
+  Логи:        journalctl -u sing-box -n 50 --no-pager
+
 === Общие команды ===
 
-  Все сервисы: systemctl status $XRAY_SERVICE $HYSTERIA_SERVICE
-  Активные:    ss -tlnp | grep -E 'xray|hysteria'
+  Все сервисы: systemctl status $XRAY_SERVICE $HYSTERIA_SERVICE 3proxy sing-box
+  Активные:    ss -tlnp | grep -E 'xray|hysteria|3proxy|sing-box'
   Порты:       ss -tlnpu" \
                     "Команды управления сервисами"
                 ;;

@@ -17,6 +17,8 @@ backup_create() {
     [[ -d "$XRAY_CONFIG_DIR" ]]     && dirs_to_backup+=("$XRAY_CONFIG_DIR")
     [[ -d "$HYSTERIA_CONFIG_DIR" ]]  && dirs_to_backup+=("$HYSTERIA_CONFIG_DIR")
     [[ -d "/etc/amneziawg" ]]        && dirs_to_backup+=("/etc/amneziawg")
+    [[ -d "/etc/3proxy" ]]           && dirs_to_backup+=("/etc/3proxy")
+    [[ -d "/etc/sing-box" ]]         && dirs_to_backup+=("/etc/sing-box")
 
     {
         echo "10"
@@ -57,6 +59,8 @@ backup_create_silent() {
     [[ -d "$XRAY_CONFIG_DIR" ]]     && dirs_to_backup+=("$XRAY_CONFIG_DIR")
     [[ -d "$HYSTERIA_CONFIG_DIR" ]]  && dirs_to_backup+=("$HYSTERIA_CONFIG_DIR")
     [[ -d "/etc/amneziawg" ]]        && dirs_to_backup+=("/etc/amneziawg")
+    [[ -d "/etc/3proxy" ]]           && dirs_to_backup+=("/etc/3proxy")
+    [[ -d "/etc/sing-box" ]]         && dirs_to_backup+=("/etc/sing-box")
 
     if tar -czf "$backup_file" "${dirs_to_backup[@]}" 2>/dev/null; then
         log_info "Автобэкап создан: $backup_file"
@@ -134,6 +138,8 @@ backup_restore() {
 
             systemctl restart "$XRAY_SERVICE" 2>/dev/null || true
             systemctl restart "$HYSTERIA_SERVICE" 2>/dev/null || true
+            systemctl restart "3proxy" 2>/dev/null || true
+            systemctl restart "sing-box" 2>/dev/null || true
 
             echo "100"
             echo "XXX"

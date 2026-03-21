@@ -21,6 +21,13 @@ _updater_get_local_version() {
                 echo "не установлен"
             fi
             ;;
+        singbox)
+            if [[ -x "$SINGBOX_BIN" ]]; then
+                "$SINGBOX_BIN" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "неизвестно"
+            else
+                echo "не установлен"
+            fi
+            ;;
         vpnmgr)
             echo "$VPNMGR_VERSION"
             ;;
@@ -33,6 +40,7 @@ _updater_get_remote_version() {
     case "$component" in
         xray)     api_url="https://api.github.com/repos/XTLS/Xray-core/releases/latest" ;;
         hysteria) api_url="https://api.github.com/repos/apernet/hysteria/releases/latest" ;;
+        singbox)  api_url="https://api.github.com/repos/SagerNet/sing-box/releases/latest" ;;
         vpnmgr)   api_url="https://api.github.com/repos/f2re/vpnmgr/releases/latest" ;;
         *)        echo "неизвестно"; return ;;
     esac
@@ -44,7 +52,7 @@ updater_check_versions() {
     local msg=""
 
     # Собираем версии с прогресс-баром
-    local xray_local xray_remote hy_local hy_remote vpnmgr_local vpnmgr_remote
+    local xray_local xray_remote hy_local hy_remote sb_local sb_remote vpnmgr_local vpnmgr_remote
 
     {
         echo "10"
@@ -55,7 +63,7 @@ updater_check_versions() {
         xray_local=$(_updater_get_local_version xray)
         xray_remote=$(_updater_get_remote_version xray)
 
-        echo "40"
+        echo "30"
         echo "XXX"
         echo "Проверка Hysteria 2..."
         echo "XXX"
@@ -63,7 +71,15 @@ updater_check_versions() {
         hy_local=$(_updater_get_local_version hysteria)
         hy_remote=$(_updater_get_remote_version hysteria)
 
-        echo "70"
+        echo "50"
+        echo "XXX"
+        echo "Проверка sing-box..."
+        echo "XXX"
+
+        sb_local=$(_updater_get_local_version singbox)
+        sb_remote=$(_updater_get_remote_version singbox)
+
+        echo "80"
         echo "XXX"
         echo "Проверка vpnmgr..."
         echo "XXX"
@@ -82,6 +98,8 @@ updater_check_versions() {
     xray_remote=$(_updater_get_remote_version xray)
     hy_local=$(_updater_get_local_version hysteria)
     hy_remote=$(_updater_get_remote_version hysteria)
+    sb_local=$(_updater_get_local_version singbox)
+    sb_remote=$(_updater_get_remote_version singbox)
     vpnmgr_local="$VPNMGR_VERSION"
     vpnmgr_remote=$(_updater_get_remote_version vpnmgr)
 
@@ -92,6 +110,9 @@ updater_check_versions() {
     msg+="Hysteria 2:\n"
     msg+="  Установлена: $hy_local\n"
     msg+="  Доступна:    $hy_remote\n\n"
+    msg+="sing-box:\n"
+    msg+="  Установлена: $sb_local\n"
+    msg+="  Доступна:    $sb_remote\n\n"
     msg+="vpnmgr:\n"
     msg+="  Установлена: $vpnmgr_local\n"
     msg+="  Доступна:    $vpnmgr_remote"
@@ -155,6 +176,32 @@ updater_update_hysteria() {
 
     # Используем ту же функцию установки — она обновит бинарник
     hysteria_install
+}
+
+# --- Обновление sing-box ---
+
+updater_update_singbox() {
+    if ! singbox_is_installed; then
+        ui_error "sing-box не установлен.\nИспользуйте раздел Протоколы для установки."
+        return
+    fi
+
+    local current_ver
+    current_ver=$(_updater_get_local_version singbox)
+    local remote_ver
+    remote_ver=$(_updater_get_remote_version singbox)
+
+    if [[ "$remote_ver" == "неизвестно" ]]; then
+        ui_error "Не удалось проверить новую версию.\nПроверьте интернет-соединение."
+        return
+    fi
+
+    if ! ui_confirm "Обновить sing-box?\n\nТекущая: $current_ver\nДоступна: $remote_ver\n\nСервис будет перезапущен."; then
+        return
+    fi
+
+    cp "$SINGBOX_BIN" "${SINGBOX_BIN}.bak.$(date +%s)" 2>/dev/null || true
+    singbox_install
 }
 
 # --- Обновление vpnmgr ---
@@ -242,14 +289,16 @@ updater_manage() {
             "1" "Проверить версии" \
             "2" "Обновить Xray-core" \
             "3" "Обновить Hysteria 2" \
-            "4" "Обновить vpnmgr" \
+            "4" "Обновить sing-box" \
+            "5" "Обновить vpnmgr" \
             "0" "Назад") || break
 
         case "$choice" in
             1) updater_check_versions   || true ;;
             2) updater_update_xray      || true ;;
             3) updater_update_hysteria  || true ;;
-            4) updater_update_vpnmgr    || true ;;
+            4) updater_update_singbox   || true ;;
+            5) updater_update_vpnmgr    || true ;;
             0) return                   ;;
         esac
     done

@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 
-# lib/13_socks5.sh - Полноценный SOCKS5 прокси сервер через dante (danted)
+# lib/13_socks5.sh - SOCKS5 прокси сервер через 3proxy
 
 SOCKS5_DEFAULT_PORT=1080
-SOCKS5_SERVICE="danted"
-SOCKS5_CONFIG="/etc/danted.conf"
-SOCKS5_LOG="/var/log/danted.log"
+SOCKS5_SERVICE="3proxy"
+SOCKS5_BIN="/usr/local/bin/3proxy"
+SOCKS5_CONFIG_DIR="/etc/3proxy"
+SOCKS5_CONFIG="$SOCKS5_CONFIG_DIR/3proxy.cfg"
+SOCKS5_PASSWD_FILE="$SOCKS5_CONFIG_DIR/passwd"
+SOCKS5_LOG="/var/log/3proxy/3proxy.log"
+SOCKS5_PID_FILE="/var/run/3proxy.pid"
 SOCKS5_USERS_JSON="$DATA_DIR/socks5_users.json"
 
 # ─── Вспомогательные ────────────────────────────────────────────────────────
@@ -17,19 +21,14 @@ _socks5_users_init() {
     fi
 }
 
-_socks5_get_interface() {
-    # Определяем внешний сетевой интерфейс
-    ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1
-}
-
 _socks5_get_port() {
     if [[ -f "$SOCKS5_CONFIG" ]]; then
-        grep -oP '(?<=port = )\d+' "$SOCKS5_CONFIG" 2>/dev/null | head -1
+        grep -oP '(?<=socks -p)\d+' "$SOCKS5_CONFIG" 2>/dev/null | head -1
     fi
 }
 
 socks5_is_installed() {
-    command -v danted >/dev/null 2>&1 || [[ -x /usr/sbin/danted ]] || dpkg -l dante-server >/dev/null 2>&1
+    [[ -x "$SOCKS5_BIN" ]]
 }
 
 socks5_is_running() {
@@ -40,7 +39,7 @@ socks5_is_running() {
 
 socks5_install() {
     if socks5_is_installed; then
-        ui_msgbox "dante-server уже установлен."
+        ui_msgbox "3proxy уже установлен."
         return
     fi
 
@@ -71,7 +70,7 @@ socks5_install() {
         fi
     fi
 
-    log_info "SOCKS5: начало установки dante-server (порт $port)"
+    log_info "SOCKS5: начало установки 3proxy (порт $port)"
 
     local install_log
     install_log=$(mktemp)
@@ -82,111 +81,127 @@ socks5_install() {
         echo "Обновление списка пакетов..."
         echo "XXX"
         log_info "SOCKS5: apt-get update..."
-        if apt-get update -qq >> "$install_log" 2>&1; then
-            log_info "SOCKS5: apt-get update — успешно"
-        else
-            log_error "SOCKS5: apt-get update — ошибка (код $?)"
-            log_error "SOCKS5: вывод apt-get update: $(cat "$install_log" 2>/dev/null)"
-        fi
+        apt-get update -qq >> "$install_log" 2>&1 || true
+
+        echo "20"
+        echo "XXX"
+        echo "Установка зависимостей для сборки..."
+        echo "XXX"
+        log_info "SOCKS5: установка build-essential..."
+        apt-get install -y build-essential git >> "$install_log" 2>&1 || true
 
         echo "40"
         echo "XXX"
-        echo "Установка dante-server..."
+        echo "Скачивание и сборка 3proxy..."
         echo "XXX"
-        log_info "SOCKS5: apt-get install dante-server..."
-        if apt-get install -y dante-server >> "$install_log" 2>&1; then
-            log_info "SOCKS5: dante-server установлен успешно"
+        log_info "SOCKS5: клонирование 3proxy..."
+        local build_dir
+        build_dir=$(mktemp -d)
+        if git clone --depth 1 https://github.com/3proxy/3proxy.git "$build_dir/3proxy" >> "$install_log" 2>&1; then
+            log_info "SOCKS5: сборка 3proxy..."
+            cd "$build_dir/3proxy" || true
+            make -f Makefile.Linux >> "$install_log" 2>&1 || {
+                log_error "SOCKS5: ошибка сборки 3proxy"
+            }
+            if [[ -f "bin/3proxy" ]]; then
+                cp bin/3proxy "$SOCKS5_BIN"
+                chmod +x "$SOCKS5_BIN"
+                log_info "SOCKS5: бинарник скопирован в $SOCKS5_BIN"
+            else
+                log_error "SOCKS5: бинарник не найден после сборки"
+            fi
+            cd "$BASE_DIR" || true
         else
-            log_error "SOCKS5: apt-get install dante-server — ошибка (код $?)"
-            log_error "SOCKS5: вывод apt-get: $(tail -30 "$install_log" 2>/dev/null)"
+            log_error "SOCKS5: ошибка клонирования 3proxy"
         fi
+        rm -rf "$build_dir"
 
         echo "70"
         echo "XXX"
         echo "Настройка конфигурации..."
         echo "XXX"
-        log_info "SOCKS5: запись конфигурации $SOCKS5_CONFIG (порт $port)"
+        mkdir -p "$SOCKS5_CONFIG_DIR" /var/log/3proxy
+        touch "$SOCKS5_PASSWD_FILE"
+        chmod 600 "$SOCKS5_PASSWD_FILE"
         socks5_write_config "$port"
         log_info "SOCKS5: конфигурация записана"
+
+        echo "80"
+        echo "XXX"
+        echo "Создание systemd-сервиса..."
+        echo "XXX"
+        _socks5_create_systemd_service
 
         echo "90"
         echo "XXX"
         echo "Запуск сервиса..."
         echo "XXX"
         log_info "SOCKS5: systemctl enable $SOCKS5_SERVICE..."
-        if systemctl enable "$SOCKS5_SERVICE" >> "$install_log" 2>&1; then
-            log_info "SOCKS5: systemctl enable — успешно"
-        else
-            log_warn "SOCKS5: systemctl enable — ошибка: $(tail -5 "$install_log" 2>/dev/null)"
-        fi
-
-        log_info "SOCKS5: systemctl restart $SOCKS5_SERVICE..."
-        if systemctl restart "$SOCKS5_SERVICE" >> "$install_log" 2>&1; then
-            log_info "SOCKS5: сервис запущен"
-        else
-            log_error "SOCKS5: systemctl restart — ошибка: $(tail -10 "$install_log" 2>/dev/null)"
-        fi
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable "$SOCKS5_SERVICE" >> "$install_log" 2>&1 || true
+        systemctl restart "$SOCKS5_SERVICE" >> "$install_log" 2>&1 || true
 
         _socks5_users_init
         echo "100"
-    } | ui_progress "Установка SOCKS5 (dante)"
+    } | ui_progress "Установка SOCKS5 (3proxy)"
 
     if ! socks5_is_installed; then
         local err_tail
         err_tail=$(tail -20 "$install_log" 2>/dev/null)
-        log_error "SOCKS5: установка провалилась — dante-server не обнаружен после установки"
-        log_error "SOCKS5: полный вывод: $err_tail"
+        log_error "SOCKS5: установка провалилась — 3proxy не обнаружен после установки"
         rm -f "$install_log"
-        ui_error "Ошибка установки dante-server.\n\nВывод apt-get:\n${err_tail}\n\nПроверьте вручную:\n  apt-get install dante-server\n\nЛог: $MAIN_LOG"
+        ui_error "Ошибка установки 3proxy.\n\n${err_tail}\n\nЛог: $MAIN_LOG"
         return
     fi
 
     rm -f "$install_log"
-    log_info "SOCKS5 (danted) установлен на порту $port"
+    log_info "SOCKS5 (3proxy) установлен на порту $port"
     ui_success "SOCKS5 сервер установлен!\n\nПорт: $port\nАвторизация: username/password\n\nДобавьте пользователей через меню управления."
+}
+
+_socks5_create_systemd_service() {
+    cat > /etc/systemd/system/3proxy.service <<EOF
+[Unit]
+Description=3proxy - tiny free proxy server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=$SOCKS5_BIN $SOCKS5_CONFIG
+ExecReload=/bin/kill -HUP \$MAINPID
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    log_info "SOCKS5: systemd-сервис создан"
 }
 
 socks5_uninstall() {
     if ! socks5_is_installed; then
-        ui_msgbox "dante-server не установлен."
+        ui_msgbox "3proxy не установлен."
         return
     fi
 
-    if ! ui_confirm "Удалить SOCKS5 сервер (danted) и всех пользователей?"; then
+    if ! ui_confirm "Удалить SOCKS5 сервер (3proxy) и всех пользователей?"; then
         return
     fi
 
-    log_info "SOCKS5: начало удаления dante-server"
+    log_info "SOCKS5: начало удаления 3proxy"
 
-    # Удаляем всех socks5-пользователей системы
-    _socks5_users_init
-    local users
-    users=$(jq -r '.users[].username' "$SOCKS5_USERS_JSON" 2>/dev/null)
-    while IFS= read -r u; do
-        [[ -z "$u" ]] && continue
-        log_info "SOCKS5: удаление системного пользователя '$u'"
-        userdel "$u" 2>/dev/null || log_warn "SOCKS5: userdel '$u' завершился с ошибкой"
-    done <<< "$users"
-
-    log_info "SOCKS5: systemctl stop $SOCKS5_SERVICE"
-    systemctl stop "$SOCKS5_SERVICE" 2>/dev/null \
-        && log_info "SOCKS5: сервис остановлен" \
-        || log_warn "SOCKS5: systemctl stop — ошибка (сервис уже остановлен?)"
-
-    log_info "SOCKS5: systemctl disable $SOCKS5_SERVICE"
+    systemctl stop "$SOCKS5_SERVICE" 2>/dev/null || true
     systemctl disable "$SOCKS5_SERVICE" 2>/dev/null || true
+    rm -f /etc/systemd/system/3proxy.service
+    systemctl daemon-reload 2>/dev/null || true
 
-    log_info "SOCKS5: apt-get remove dante-server"
-    if apt-get remove -y dante-server 2>/dev/null; then
-        log_info "SOCKS5: dante-server удалён через apt"
-    else
-        log_warn "SOCKS5: apt-get remove вернул ненулевой код"
-    fi
+    rm -f "$SOCKS5_BIN"
+    rm -rf "$SOCKS5_CONFIG_DIR"
+    rm -f "$SOCKS5_USERS_JSON"
+    rm -rf /var/log/3proxy
 
-    rm -f "$SOCKS5_CONFIG" "$SOCKS5_USERS_JSON"
-    log_info "SOCKS5: конфиг и данные пользователей удалены"
-
-    log_info "SOCKS5 (danted) удалён"
+    log_info "SOCKS5 (3proxy) удалён"
     ui_success "SOCKS5 сервер удалён."
 }
 
@@ -194,51 +209,58 @@ socks5_uninstall() {
 
 socks5_write_config() {
     local port="${1:-$SOCKS5_DEFAULT_PORT}"
-    local iface
-    iface=$(_socks5_get_interface)
-    if [[ -z "$iface" ]]; then
-        log_warn "SOCKS5: не удалось определить сетевой интерфейс, используем eth0"
-        iface="eth0"
-    else
-        log_info "SOCKS5: внешний интерфейс: $iface"
-    fi
-    log_info "SOCKS5: запись $SOCKS5_CONFIG (порт $port, интерфейс $iface)"
+    mkdir -p "$SOCKS5_CONFIG_DIR" /var/log/3proxy
+
+    log_info "SOCKS5: запись $SOCKS5_CONFIG (порт $port)"
 
     cat > "$SOCKS5_CONFIG" <<EOF
-logoutput: $SOCKS5_LOG
+# 3proxy configuration
+daemon
+pidfile $SOCKS5_PID_FILE
 
-# Внутренний интерфейс — принимаем подключения
-internal: 0.0.0.0 port = $port
+# Логирование
+log $SOCKS5_LOG D
+logformat "L%d-%m-%Y %H:%M:%S %N.%p %E %C:%c %R:%r %O %I %h %T"
+rotate 30
 
-# Внешний интерфейс — исходящий трафик
-external: $iface
+# Безопасность
+nscache 65536
+nscache6 65536
+timeouts 1 5 30 60 180 1800 15 60
 
-# Метод аутентификации клиентов
-clientmethod: none
-socksmethod: username
+# Авторизация через файл паролей
+auth strong
+users \$/etc/3proxy/passwd
 
-# Пользователи демона
-user.privileged: root
-user.unprivileged: nobody
+# Разрешаем всем аутентифицированным пользователям
+allow *
 
-# Разрешаем клиентские подключения с любого адреса
-client pass {
-    from: 0.0.0.0/0 to: 0.0.0.0/0
-    log: error connect disconnect
-}
-
-# SOCKS5 с аутентификацией
-socks pass {
-    from: 0.0.0.0/0 to: 0.0.0.0/0
-    socksmethod: username
-    log: error connect disconnect
-}
+# SOCKS5 прокси
+socks -p${port}
 EOF
+    log_info "SOCKS5: конфигурация записана (порт $port)"
+}
+
+# Синхронизируем файл паролей из JSON
+_socks5_sync_passwd() {
+    _socks5_users_init
+    local tmp="${SOCKS5_PASSWD_FILE}.tmp.$$"
+    > "$tmp"
+
+    while IFS=$'\t' read -r username password enabled; do
+        [[ -z "$username" ]] && continue
+        [[ "$enabled" == "false" ]] && continue
+        # Формат: user:CL:password (CL = clear text)
+        echo "${username}:CL:${password}" >> "$tmp"
+    done < <(jq -r '.users[] | [.username, .password, (.enabled | tostring)] | @tsv' "$SOCKS5_USERS_JSON" 2>/dev/null)
+
+    mv "$tmp" "$SOCKS5_PASSWD_FILE"
+    chmod 600 "$SOCKS5_PASSWD_FILE"
 }
 
 socks5_change_port() {
     if ! socks5_is_installed; then
-        ui_msgbox "dante-server не установлен."
+        ui_msgbox "3proxy не установлен."
         return
     fi
 
@@ -291,7 +313,7 @@ socks5_change_port() {
 
 socks5_start_stop() {
     if ! socks5_is_installed; then
-        ui_msgbox "dante-server не установлен."
+        ui_msgbox "3proxy не установлен."
         return
     fi
 
@@ -303,7 +325,7 @@ socks5_start_stop() {
                 ui_success "SOCKS5 сервер остановлен."
             else
                 log_error "SOCKS5: systemctl stop — ошибка (код $?)"
-                ui_error "Не удалось остановить SOCKS5.\n\nСм. journalctl -u danted -n 30"
+                ui_error "Не удалось остановить SOCKS5.\n\nСм. journalctl -u 3proxy -n 30"
             fi
         fi
     else
@@ -317,7 +339,7 @@ socks5_start_stop() {
             journal_tail=$(journalctl -u "$SOCKS5_SERVICE" -n 20 --no-pager 2>/dev/null || true)
             log_error "SOCKS5: сервис не запустился"
             log_error "SOCKS5: journal: $journal_tail"
-            ui_error "Не удалось запустить SOCKS5.\n\nПроверьте логи:\n  journalctl -u danted -n 30"
+            ui_error "Не удалось запустить SOCKS5.\n\nПроверьте логи:\n  journalctl -u 3proxy -n 30"
         fi
     fi
 }
@@ -348,35 +370,21 @@ socks5_user_add() {
         password=$(gen_password 16)
     fi
 
-    # Создаём системного пользователя без домашней директории и без шелла
-    if id "$username" &>/dev/null; then
-        ui_error "Системный пользователь '$username' уже существует (но не в базе vpnmgr).\nВыберите другое имя."
-        return
-    fi
-
-    log_info "SOCKS5: useradd $username"
-    useradd -M -s /usr/sbin/nologin "$username" 2>/dev/null || {
-        log_error "SOCKS5: useradd '$username' завершился с ошибкой (код $?)"
-        ui_error "Ошибка создания системного пользователя."
-        return
-    }
-
-    # Устанавливаем пароль
-    log_info "SOCKS5: установка пароля для $username"
-    echo "${username}:${password}" | chpasswd 2>/dev/null || {
-        log_error "SOCKS5: chpasswd '$username' завершился с ошибкой (код $?)"
-        userdel "$username" 2>/dev/null || true
-        ui_error "Ошибка установки пароля."
-        return
-    }
-
-    # Сохраняем в JSON (пароль в открытом виде для отображения клиенту)
+    # Сохраняем в JSON
     local created_at
     created_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     local tmp="${SOCKS5_USERS_JSON}.tmp.$$"
     jq --arg u "$username" --arg p "$password" --arg t "$created_at" \
         '.users += [{"username": $u, "password": $p, "created_at": $t, "enabled": true}]' \
         "$SOCKS5_USERS_JSON" > "$tmp" && mv "$tmp" "$SOCKS5_USERS_JSON"
+
+    # Синхронизируем passwd-файл 3proxy
+    _socks5_sync_passwd
+
+    # Перезагружаем 3proxy если запущен
+    if socks5_is_running; then
+        systemctl restart "$SOCKS5_SERVICE" 2>/dev/null || true
+    fi
 
     log_info "SOCKS5: пользователь '$username' добавлен"
 
@@ -414,13 +422,17 @@ socks5_user_delete() {
         return
     fi
 
-    # Удаляем системного пользователя
-    userdel "$username" 2>/dev/null || true
-
     # Удаляем из JSON
     local tmp="${SOCKS5_USERS_JSON}.tmp.$$"
     jq --arg u "$username" 'del(.users[] | select(.username == $u))' \
         "$SOCKS5_USERS_JSON" > "$tmp" && mv "$tmp" "$SOCKS5_USERS_JSON"
+
+    # Синхронизируем passwd-файл
+    _socks5_sync_passwd
+
+    if socks5_is_running; then
+        systemctl restart "$SOCKS5_SERVICE" 2>/dev/null || true
+    fi
 
     log_info "SOCKS5: пользователь '$username' удалён"
     ui_success "Пользователь '$username' удалён."
@@ -450,24 +462,22 @@ socks5_user_toggle() {
     local current_enabled
     current_enabled=$(jq -r --arg u "$username" '.users[] | select(.username == $u) | .enabled' "$SOCKS5_USERS_JSON")
 
+    local tmp="${SOCKS5_USERS_JSON}.tmp.$$"
     if [[ "$current_enabled" == "true" ]]; then
-        # Блокируем: меняем шелл на /bin/false и блокируем пароль
-        usermod -s /bin/false "$username" 2>/dev/null || true
-        passwd -l "$username" 2>/dev/null || true
-
-        local tmp="${SOCKS5_USERS_JSON}.tmp.$$"
         jq --arg u "$username" '(.users[] | select(.username == $u)).enabled = false' \
             "$SOCKS5_USERS_JSON" > "$tmp" && mv "$tmp" "$SOCKS5_USERS_JSON"
         ui_success "Пользователь '$username' отключён."
     else
-        # Разблокируем
-        usermod -s /usr/sbin/nologin "$username" 2>/dev/null || true
-        passwd -u "$username" 2>/dev/null || true
-
-        local tmp="${SOCKS5_USERS_JSON}.tmp.$$"
         jq --arg u "$username" '(.users[] | select(.username == $u)).enabled = true' \
             "$SOCKS5_USERS_JSON" > "$tmp" && mv "$tmp" "$SOCKS5_USERS_JSON"
         ui_success "Пользователь '$username' включён."
+    fi
+
+    # Синхронизируем passwd-файл
+    _socks5_sync_passwd
+
+    if socks5_is_running; then
+        systemctl restart "$SOCKS5_SERVICE" 2>/dev/null || true
     fi
 
     log_info "SOCKS5: пользователь '$username' — статус изменён"
@@ -579,19 +589,15 @@ socks5_show_status() {
     _socks5_users_init
     user_count=$(jq '.users | length' "$SOCKS5_USERS_JSON" 2>/dev/null)
 
-    local iface
-    iface=$(_socks5_get_interface)
-
     local info
-    info="SOCKS5 (dante): $status_str\n\n"
-    info+="Адрес:      $server_ip:$port\n"
-    info+="Интерфейс:  $iface\n"
-    info+="Авторизация: username/password\n"
+    info="SOCKS5 (3proxy): $status_str\n\n"
+    info+="Адрес:         $server_ip:$port\n"
+    info+="Авторизация:   username/password\n"
     info+="Пользователей: $user_count\n\n"
     info+="─── Пример подключения ─────────────────\n"
     info+="curl --socks5 USER:PASS@$server_ip:$port https://example.com\n\n"
     info+="─── Лог ────────────────────────────────\n"
-    info+="journalctl -u danted -n 30 -f"
+    info+="journalctl -u 3proxy -n 30 -f"
 
     ui_msgbox "$info" "Статус SOCKS5"
 }
@@ -641,7 +647,7 @@ socks5_manage() {
         fi
 
         local choice
-        choice=$(ui_menu "SOCKS5 сервер (dante) — $status_str" \
+        choice=$(ui_menu "SOCKS5 сервер (3proxy) — $status_str" \
             "1" "Статус" \
             "2" "Установить" \
             "3" "Запустить / Остановить" \

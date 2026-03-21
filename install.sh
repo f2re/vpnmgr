@@ -48,7 +48,8 @@ if [[ ! -f "$INSTALL_DIR/data/protocols.json" ]]; then
   "xray": {"enabled": false, "version": "", "port": 443},
   "hysteria2": {"enabled": false, "version": "", "port": 8443, "obfs": "salamander", "obfs_password": "", "masquerade_url": "https://www.google.com", "port_hopping": false, "port_hopping_range": "20000-40000"},
   "amneziawg": {"enabled": false, "port": 51820},
-  "socks5": {"enabled": false, "port": 1080}
+  "socks5": {"enabled": false, "port": 1080},
+  "singbox": {"enabled": false, "version": "", "socks_port": 10808, "socks_enabled": true, "vless_port": 10443, "vless_enabled": false, "ss_port": 8388, "ss_enabled": false, "ss_method": "2022-blake3-aes-128-gcm", "hy2_port": 18443, "hy2_enabled": false}
 }
 EOF
 fi

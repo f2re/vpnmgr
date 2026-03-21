@@ -34,6 +34,12 @@ HYSTERIA_CONFIG="$HYSTERIA_CONFIG_DIR/config.yaml"
 XRAY_SERVICE="xray"
 HYSTERIA_SERVICE="hysteria"
 
+# sing-box
+SINGBOX_BIN="/usr/local/bin/sing-box"
+SINGBOX_CONFIG_DIR="/etc/sing-box"
+SINGBOX_CONFIG="$SINGBOX_CONFIG_DIR/config.json"
+SINGBOX_SERVICE="sing-box"
+
 # Whiptail настройки
 WT_TITLE="vpnmgr v$VPNMGR_VERSION"
-WT_BACKTITLE="VPN Manager - Управление VLESS, Hysteria2, AmneziaWG"
+WT_BACKTITLE="VPN Manager - Управление VLESS, Hysteria2, AmneziaWG, sing-box"

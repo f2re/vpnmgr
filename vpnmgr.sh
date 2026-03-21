@@ -24,6 +24,7 @@ source "$BASE_DIR/lib/10_xray.sh"
 source "$BASE_DIR/lib/11_hysteria.sh"
 source "$BASE_DIR/lib/12_amnezia.sh"
 source "$BASE_DIR/lib/13_socks5.sh"
+source "$BASE_DIR/lib/14_singbox.sh"
 source "$BASE_DIR/lib/20_users.sh"
 source "$BASE_DIR/lib/30_monitor.sh"
 source "$BASE_DIR/lib/40_connection.sh"
@@ -101,7 +102,8 @@ protocols_menu() {
             "x" "VLESS + XHTTP (Xray)" \
             "h" "Hysteria 2" \
             "a" "AmneziaWG" \
-            "s" "SOCKS5 (локальный прокси)" \
+            "s" "SOCKS5 (3proxy)" \
+            "b" "sing-box (мультипротокол)" \
             "0" "Назад") || break
 
         case "$choice" in
@@ -109,6 +111,7 @@ protocols_menu() {
             h) hysteria_manage || true ;;
             a) amnezia_manage  || true ;;
             s) socks5_manage   || true ;;
+            b) singbox_manage  || true ;;
             0) break           ;;
         esac
     done
@@ -152,7 +155,7 @@ main_menu() {
 
 init() {
     mkdir -p "$DATA_DIR" "$LOGS_DIR" "$BACKUPS_DIR" "$TEMPLATES_DIR"
-    mkdir -p /var/log/xray /var/log/hysteria 2>/dev/null || true
+    mkdir -p /var/log/xray /var/log/hysteria /var/log/sing-box /var/log/3proxy 2>/dev/null || true
     touch "$MAIN_LOG"
 
     # Инициализация protocols.json если не существует
@@ -162,7 +165,8 @@ init() {
   "xray": {"enabled": false, "version": "", "port": 443},
   "hysteria2": {"enabled": false, "version": "", "port": 8443, "obfs": "salamander", "obfs_password": "", "masquerade_url": "https://www.google.com", "port_hopping": false, "port_hopping_range": "20000-40000"},
   "amneziawg": {"enabled": false, "port": 51820},
-  "socks5": {"enabled": false, "port": 1080}
+  "socks5": {"enabled": false, "port": 1080},
+  "singbox": {"enabled": false, "version": "", "socks_port": 10808, "socks_enabled": true, "vless_port": 10443, "vless_enabled": false, "ss_port": 8388, "ss_enabled": false, "ss_method": "2022-blake3-aes-128-gcm", "hy2_port": 18443, "hy2_enabled": false}
 }
 PJSON
         log_info "Создан protocols.json"
