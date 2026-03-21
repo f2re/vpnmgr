@@ -1,0 +1,12 @@
+# Данные и конфиги
+data/*.json
+!data/.gitkeep
+
+# Логи и бэкапы
+logs/*.log
+backups/*.tar.gz
+*.bak
+
+# Временные файлы
+.tmp/
+tmp/
