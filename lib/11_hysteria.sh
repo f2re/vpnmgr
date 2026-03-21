@@ -560,15 +560,15 @@ hysteria_manage() {
             "0" "Назад") || break
 
         case "$choice" in
-            a) hysteria_install      ;;
-            b) hysteria_start_stop   ;;
-            c) hysteria_restart      ;;
-            d) hysteria_port_hopping ;;
-            e) hysteria_masquerade   ;;
-            f) hysteria_salamander   ;;
-            g) hysteria_change_port  ;;
-            h) hysteria_show_config  ;;
-            i) hysteria_uninstall    ;;
+            a) hysteria_install      || true ;;
+            b) hysteria_start_stop   || true ;;
+            c) hysteria_restart      || true ;;
+            d) hysteria_port_hopping || true ;;
+            e) hysteria_masquerade   || true ;;
+            f) hysteria_salamander   || true ;;
+            g) hysteria_change_port  || true ;;
+            h) hysteria_show_config  || true ;;
+            i) hysteria_uninstall    || true ;;
             0) return                ;;
         esac
     done

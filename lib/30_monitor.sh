@@ -201,21 +201,106 @@ monitor_check_blocks() {
     ui_msgbox "$info" "Проверка блокировок"
 }
 
+monitor_services_manage() {
+    while true; do
+        # Актуальный статус
+        local xray_st hysteria_st amnezia_st
+        xray_st=$(_service_status_line    "$XRAY_SERVICE"     "VLESS+XHTTP (Xray)")
+        hysteria_st=$(_service_status_line "$HYSTERIA_SERVICE" "Hysteria 2        ")
+        amnezia_st=$(_amnezia_status_line)
+
+        local choice
+        choice=$(ui_menu "Управление сервисами\n\n$xray_st\n$hysteria_st\n$amnezia_st" \
+            "1" "Перезапустить Xray" \
+            "2" "Перезапустить Hysteria 2" \
+            "3" "Перезапустить AmneziaWG" \
+            "4" "Перезапустить все" \
+            "c" "Показать команды (для ручного запуска)" \
+            "0" "Назад") || break
+
+        case "$choice" in
+            1)
+                if systemctl restart "$XRAY_SERVICE" 2>/dev/null; then
+                    ui_success "Xray перезапущен."
+                else
+                    ui_error "Не удалось перезапустить Xray.\n\nПроверьте: journalctl -u $XRAY_SERVICE -n 30 --no-pager"
+                fi
+                ;;
+            2)
+                if systemctl restart "$HYSTERIA_SERVICE" 2>/dev/null; then
+                    ui_success "Hysteria 2 перезапущена."
+                else
+                    ui_error "Не удалось перезапустить Hysteria 2.\n\nПроверьте: journalctl -u $HYSTERIA_SERVICE -n 30 --no-pager"
+                fi
+                ;;
+            3)
+                awg-quick down awg0 2>/dev/null || true
+                if awg-quick up awg0 2>/dev/null; then
+                    ui_success "AmneziaWG перезапущен."
+                else
+                    ui_error "Не удалось перезапустить AmneziaWG.\n\nПроверьте: journalctl -u awg-quick@awg0 -n 30 --no-pager"
+                fi
+                ;;
+            4)
+                systemctl restart "$XRAY_SERVICE"     2>/dev/null || true
+                systemctl restart "$HYSTERIA_SERVICE"  2>/dev/null || true
+                awg-quick down awg0 2>/dev/null || true
+                awg-quick up   awg0 2>/dev/null || true
+                ui_success "Сервисы перезапущены."
+                ;;
+            c)
+                ui_msgbox "\
+=== Команды для Xray ===
+
+  Статус:      systemctl status $XRAY_SERVICE
+  Перезапуск:  systemctl restart $XRAY_SERVICE
+  Стоп:        systemctl stop $XRAY_SERVICE
+  Логи:        journalctl -u $XRAY_SERVICE -n 50 --no-pager
+
+=== Команды для Hysteria 2 ===
+
+  Статус:      systemctl status $HYSTERIA_SERVICE
+  Перезапуск:  systemctl restart $HYSTERIA_SERVICE
+  Стоп:        systemctl stop $HYSTERIA_SERVICE
+  Логи:        journalctl -u $HYSTERIA_SERVICE -n 50 --no-pager
+
+=== Команды для AmneziaWG ===
+
+  Статус:      ip link show awg0
+  Статус:      awg show
+  Перезапуск:  awg-quick down awg0 && awg-quick up awg0
+  Стоп:        awg-quick down awg0
+  Логи:        journalctl -u awg-quick@awg0 -n 50 --no-pager
+
+=== Общие команды ===
+
+  Все сервисы: systemctl status $XRAY_SERVICE $HYSTERIA_SERVICE
+  Активные:    ss -tlnp | grep -E 'xray|hysteria'
+  Порты:       ss -tlnpu" \
+                    "Команды управления сервисами"
+                ;;
+            0) return ;;
+        esac
+    done
+}
+
 monitor_manage() {
     while true; do
         local choice
         choice=$(ui_menu "Мониторинг и логи" \
             "1" "Статус сервисов" \
             "2" "Активные соединения" \
-            "3" "Просмотр логов" \
-            "4" "Проверка блокировок" \
+            "3" "Управление сервисами (перезапуск)" \
+            "4" "Просмотр логов" \
+            "5" "Проверка блокировок" \
             "0" "Назад") || break
 
         case "$choice" in
-            1) monitor_status       ;;
-            2) monitor_connections  ;;
-            3) monitor_logs         ;;
-            4) monitor_check_blocks ;;
+            1) monitor_status           || true ;;
+            2) monitor_connections      || true ;;
+            3) monitor_services_manage  || true ;;
+            4) monitor_logs             || true ;;
+            5) monitor_check_blocks     || true ;;
             0) return               ;;
         esac
     done

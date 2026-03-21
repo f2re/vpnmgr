@@ -315,12 +315,12 @@ user_manage() {
             "0" "Назад") || break
 
         case "$choice" in
-            1) user_list ;;
-            2) user_add ;;
-            3) user_delete ;;
-            4) user_toggle ;;
-            5) user_show_connection ;;
-            6) user_reset_traffic ;;
+            1) user_list            || true ;;
+            2) user_add             || true ;;
+            3) user_delete          || true ;;
+            4) user_toggle          || true ;;
+            5) user_show_connection || true ;;
+            6) user_reset_traffic   || true ;;
             0) return ;;
         esac
     done

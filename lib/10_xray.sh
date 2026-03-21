@@ -337,12 +337,12 @@ xray_manage() {
             "0" "Назад") || break
 
         case "$choice" in
-            a) xray_install     ;;
-            b) xray_start_stop  ;;
-            c) xray_restart     ;;
-            d) xray_show_config ;;
-            e) xray_change_port ;;
-            f) xray_uninstall   ;;
+            a) xray_install     || true ;;
+            b) xray_start_stop  || true ;;
+            c) xray_restart     || true ;;
+            d) xray_show_config || true ;;
+            e) xray_change_port || true ;;
+            f) xray_uninstall   || true ;;
             0) return           ;;
         esac
     done

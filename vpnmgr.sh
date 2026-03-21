@@ -48,11 +48,15 @@ case "${1:-}" in
         set -e
         if [[ -n "$_cert_path" && -f "$_cert_path" ]]; then
             _expiry=$(openssl x509 -enddate -noout -in "$_cert_path" 2>/dev/null | cut -d= -f2)
-            _expiry_epoch=$(date -d "$_expiry" +%s 2>/dev/null || echo "0")
+            _expiry_epoch=$(date -d "$_expiry" +%s 2>/dev/null || echo "")
             _now_epoch=$(date +%s)
-            _days_left=$(( (_expiry_epoch - _now_epoch) / 86400 ))
-            if [[ "$_days_left" -lt 14 ]]; then
-                log_warn "TLS сертификат истекает через $_days_left дней: $_cert_path"
+            if [[ -n "$_expiry_epoch" && "$_expiry_epoch" =~ ^-?[0-9]+$ ]]; then
+                _days_left=$(( (_expiry_epoch - _now_epoch) / 86400 ))
+                if [[ "$_days_left" -lt 14 ]]; then
+                    log_warn "TLS сертификат истекает через $_days_left дней: $_cert_path"
+                fi
+            else
+                log_warn "Не удалось определить срок действия сертификата: $_cert_path"
             fi
         fi
         exit 0
@@ -101,10 +105,10 @@ protocols_menu() {
             "0" "Назад") || break
 
         case "$choice" in
-            x) xray_manage     ;;
-            h) hysteria_manage ;;
-            a) amnezia_manage  ;;
-            s) socks5_manage   ;;
+            x) xray_manage     || true ;;
+            h) hysteria_manage || true ;;
+            a) amnezia_manage  || true ;;
+            s) socks5_manage   || true ;;
             0) break           ;;
         esac
     done
@@ -133,12 +137,12 @@ main_menu() {
             "0" "Выход") || break
 
         case "$choice" in
-            1) monitor_status  ;;
-            2) protocols_menu  ;;
-            3) user_manage     ;;
-            4) monitor_manage  ;;
-            5) backup_manage   ;;
-            6) updater_manage  ;;
+            1) monitor_status  || true ;;
+            2) protocols_menu  || true ;;
+            3) user_manage     || true ;;
+            4) monitor_manage  || true ;;
+            5) backup_manage   || true ;;
+            6) updater_manage  || true ;;
             0|*) exit 0        ;;
         esac
     done

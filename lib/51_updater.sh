@@ -246,10 +246,10 @@ updater_manage() {
             "0" "Назад") || break
 
         case "$choice" in
-            1) updater_check_versions   ;;
-            2) updater_update_xray      ;;
-            3) updater_update_hysteria  ;;
-            4) updater_update_vpnmgr    ;;
+            1) updater_check_versions   || true ;;
+            2) updater_update_xray      || true ;;
+            3) updater_update_hysteria  || true ;;
+            4) updater_update_vpnmgr    || true ;;
             0) return                   ;;
         esac
     done

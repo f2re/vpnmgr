@@ -73,15 +73,36 @@ _amnezia_install_debian() {
         exit 1
     fi
 
-    # Пробуем установить linux-headers: сначала точную версию, потом метапакет
+    # Пробуем установить linux-headers: сначала точную версию, потом метапакет, потом поиск
     local _kr
     _kr=$(uname -r)
-    if ! apt-get install -y -qq "linux-headers-${_kr}" 2>/dev/null; then
+    local _headers_installed=false
+
+    if apt-get install -y -qq "linux-headers-${_kr}" 2>/dev/null; then
+        _headers_installed=true
+    else
         log_warn "Пакет linux-headers-${_kr} не найден, пробуем метапакет linux-headers-$(dpkg --print-architecture)"
-        if ! apt-get install -y -qq "linux-headers-$(dpkg --print-architecture)" 2>/dev/null; then
-            log_error "AmneziaWG: не удалось установить linux-headers (нужны для сборки модуля ядра)"
-            exit 1
+        if apt-get install -y -qq "linux-headers-$(dpkg --print-architecture)" 2>/dev/null; then
+            _headers_installed=true
         fi
+    fi
+
+    # Если метапакет установился, но build-директория всё ещё отсутствует —
+    # ищем ближайшие доступные headers
+    if [[ "$_headers_installed" != "true" ]] || [[ ! -d "/lib/modules/${_kr}/build" ]]; then
+        local _found_pkg
+        _found_pkg=$(apt-cache search "^linux-headers-" 2>/dev/null | grep -oP "^linux-headers-\S+" | grep -v "common\|cloud\|rt\|unsigned" | sort -V | tail -1 || true)
+        if [[ -n "$_found_pkg" ]]; then
+            log_warn "Пробуем установить ближайший пакет: $_found_pkg"
+            if apt-get install -y -qq "$_found_pkg" 2>/dev/null; then
+                _headers_installed=true
+            fi
+        fi
+    fi
+
+    if [[ ! -d "/lib/modules/${_kr}/build" ]]; then
+        log_error "AmneziaWG: linux-headers для ядра ${_kr} не найдены. Проверьте, что ядро поддерживает сборку модулей (build-директория /lib/modules/${_kr}/build отсутствует)."
+        exit 1
     fi
 
     echo "20"
@@ -704,14 +725,14 @@ amnezia_manage() {
             "0" "Назад") || break
 
         case "$choice" in
-            a) amnezia_install         ;;
-            b) amnezia_start_stop      ;;
-            c) amnezia_restart         ;;
-            d) amnezia_add_peer        ;;
-            e) amnezia_remove_peer     ;;
-            f) amnezia_jitter_settings ;;
-            g) amnezia_show_config     ;;
-            h) amnezia_uninstall       ;;
+            a) amnezia_install         || true ;;
+            b) amnezia_start_stop      || true ;;
+            c) amnezia_restart         || true ;;
+            d) amnezia_add_peer        || true ;;
+            e) amnezia_remove_peer     || true ;;
+            f) amnezia_jitter_settings || true ;;
+            g) amnezia_show_config     || true ;;
+            h) amnezia_uninstall       || true ;;
             0) return                  ;;
         esac
     done

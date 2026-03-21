@@ -249,11 +249,11 @@ backup_manage() {
             "0" "Назад") || break
 
         case "$choice" in
-            1) backup_create       ;;
-            2) backup_list         ;;
-            3) backup_restore      ;;
-            4) backup_schedule     ;;
-            5) backup_export_users ;;
+            1) backup_create       || true ;;
+            2) backup_list         || true ;;
+            3) backup_restore      || true ;;
+            4) backup_schedule     || true ;;
+            5) backup_export_users || true ;;
             0) return              ;;
         esac
     done

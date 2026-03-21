@@ -109,9 +109,9 @@ socks5_manage() {
             "0" "Назад") || break
 
         case "$choice" in
-            1) socks5_enable_xray ;;
-            2) socks5_disable     ;;
-            3) socks5_show_status ;;
+            1) socks5_enable_xray || true ;;
+            2) socks5_disable     || true ;;
+            3) socks5_show_status || true ;;
             0) return             ;;
         esac
     done
