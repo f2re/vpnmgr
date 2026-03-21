@@ -30,8 +30,8 @@ ln -sf "$INSTALL_DIR/vpnmgr.sh" "$BIN_LINK"
 
 # Установка зависимостей
 echo "[3/5] Установка зависимостей..."
-apt-get update -qq
-apt-get install -y -qq jq whiptail curl qrencode openssl
+apt-get update -qq || true
+apt-get install -y -qq jq whiptail curl qrencode openssl git
 
 # Создание директорий данных
 echo "[4/5] Инициализация..."

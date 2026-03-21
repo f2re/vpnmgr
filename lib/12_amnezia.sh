@@ -14,6 +14,144 @@ amnezia_is_running() {
     ip link show "$AMNEZIA_INTERFACE" >/dev/null 2>&1
 }
 
+# --- Установка: Ubuntu (PPA) ---
+
+_amnezia_install_ubuntu() {
+    echo "5"
+    echo "XXX"
+    echo "Добавление репозитория AmneziaWG (Ubuntu PPA)..."
+    echo "XXX"
+
+    local ubuntu_codename="focal"
+    if [[ -f /etc/os-release ]]; then
+        local vc
+        vc=$(. /etc/os-release && echo "${VERSION_CODENAME:-}")
+        [[ -n "$vc" ]] && ubuntu_codename="$vc"
+    fi
+
+    if ! curl -fsSL https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/KEY.gpg \
+        | gpg --batch --yes --dearmor -o /usr/share/keyrings/amnezia-keyring.gpg; then
+        log_error "AmneziaWG: не удалось добавить GPG ключ"
+        exit 1
+    fi
+
+    echo "deb [signed-by=/usr/share/keyrings/amnezia-keyring.gpg] https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu $ubuntu_codename main" \
+        > /etc/apt/sources.list.d/amnezia.list
+
+    echo "30"
+    echo "XXX"
+    echo "Обновление пакетов..."
+    echo "XXX"
+
+    if ! apt-get update -qq; then
+        log_error "AmneziaWG: apt-get update завершился с ошибкой"
+        exit 1
+    fi
+
+    echo "50"
+    echo "XXX"
+    echo "Установка amneziawg..."
+    echo "XXX"
+
+    if ! apt-get install -y -qq amneziawg amneziawg-tools; then
+        log_error "AmneziaWG: не удалось установить пакеты amneziawg"
+        exit 1
+    fi
+}
+
+# --- Установка: Debian (сборка из исходников) ---
+
+_amnezia_install_debian() {
+    echo "5"
+    echo "XXX"
+    echo "Установка зависимостей для сборки..."
+    echo "XXX"
+
+    if ! apt-get install -y -qq build-essential dkms linux-headers-$(uname -r) git pkg-config; then
+        log_error "AmneziaWG: не удалось установить зависимости сборки"
+        exit 1
+    fi
+
+    echo "20"
+    echo "XXX"
+    echo "Скачивание amneziawg-linux-kernel-module..."
+    echo "XXX"
+
+    local src_dir="/usr/src/amneziawg"
+    rm -rf "$src_dir"
+
+    if ! git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git "$src_dir"; then
+        log_error "AmneziaWG: не удалось скачать исходники kernel module"
+        exit 1
+    fi
+
+    echo "40"
+    echo "XXX"
+    echo "Сборка и установка модуля ядра (DKMS)..."
+    echo "XXX"
+
+    # Определяем версию из dkms.conf если есть, иначе из тега git
+    local mod_version="1.0.0"
+    if [[ -f "$src_dir/src/dkms.conf" ]]; then
+        mod_version=$(grep 'PACKAGE_VERSION' "$src_dir/src/dkms.conf" | head -1 | cut -d'"' -f2)
+    fi
+
+    # Регистрируем и собираем через DKMS
+    cd "$src_dir/src"
+    if [[ -f dkms.conf ]]; then
+        local dkms_src="/usr/src/amneziawg-${mod_version}"
+        rm -rf "$dkms_src"
+        cp -r "$src_dir/src" "$dkms_src"
+        dkms add -m amneziawg -v "$mod_version" 2>/dev/null || true
+        if ! dkms build -m amneziawg -v "$mod_version"; then
+            log_error "AmneziaWG: ошибка сборки DKMS модуля"
+            exit 1
+        fi
+        if ! dkms install -m amneziawg -v "$mod_version"; then
+            log_error "AmneziaWG: ошибка установки DKMS модуля"
+            exit 1
+        fi
+    else
+        # Fallback: ручная сборка через make
+        if ! (make && make install); then
+            log_error "AmneziaWG: ошибка сборки модуля"
+            exit 1
+        fi
+        depmod -a
+    fi
+    cd /
+
+    # Загружаем модуль
+    modprobe amneziawg 2>/dev/null || true
+
+    echo "60"
+    echo "XXX"
+    echo "Скачивание amneziawg-tools..."
+    echo "XXX"
+
+    local tools_dir="/tmp/amneziawg-tools"
+    rm -rf "$tools_dir"
+
+    if ! git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-tools.git "$tools_dir"; then
+        log_error "AmneziaWG: не удалось скачать исходники tools"
+        exit 1
+    fi
+
+    echo "75"
+    echo "XXX"
+    echo "Сборка и установка amneziawg-tools..."
+    echo "XXX"
+
+    cd "$tools_dir/src"
+    if ! (make && make install); then
+        log_error "AmneziaWG: ошибка сборки amneziawg-tools"
+        cd /
+        exit 1
+    fi
+    cd /
+    rm -rf "$tools_dir"
+}
+
 # --- Установка ---
 
 amnezia_install() {
@@ -24,58 +162,19 @@ amnezia_install() {
         set -e
         trap 'log_error "AmneziaWG: ошибка на шаге: $BASH_COMMAND (код $?)"' ERR
 
-        echo "5"
-        echo "XXX"
-        echo "Добавление репозитория AmneziaWG..."
-        echo "XXX"
-
-        # Определяем кодовое имя дистрибутива
-        local codename
-        codename=$(lsb_release -cs 2>/dev/null || echo "bullseye")
-
-        # Добавляем ключ и репозиторий
-        # --yes для gpg чтобы не спрашивал о перезаписи
-        if ! curl -fsSL https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/KEY.gpg \
-            | gpg --batch --yes --dearmor -o /usr/share/keyrings/amnezia-keyring.gpg; then
-            log_error "AmneziaWG: не удалось добавить GPG ключ (curl/gpg ошибка)"
-            exit 1
-        fi
-
-        # Определяем правильный codename для Ubuntu PPA
-        local ubuntu_codename="focal"
+        # Определяем дистрибутив
+        local distro_id=""
         if [[ -f /etc/os-release ]]; then
-            local distro_id distro_codename
             distro_id=$(. /etc/os-release && echo "${ID:-}")
-            distro_codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-}")
-            if [[ "$distro_id" == "ubuntu" && -n "$distro_codename" ]]; then
-                ubuntu_codename="$distro_codename"
-            fi
         fi
 
-        echo "deb [signed-by=/usr/share/keyrings/amnezia-keyring.gpg] https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu $ubuntu_codename main" \
-            > /etc/apt/sources.list.d/amnezia.list
-
-        echo "30"
-        echo "XXX"
-        echo "Обновление пакетов..."
-        echo "XXX"
-
-        if ! apt-get update -qq; then
-            log_error "AmneziaWG: apt-get update завершился с ошибкой"
-            exit 1
+        if [[ "$distro_id" == "ubuntu" ]]; then
+            _amnezia_install_ubuntu
+        else
+            _amnezia_install_debian
         fi
 
-        echo "50"
-        echo "XXX"
-        echo "Установка amneziawg..."
-        echo "XXX"
-
-        if ! apt-get install -y -qq amneziawg amneziawg-tools; then
-            log_error "AmneziaWG: не удалось установить пакеты amneziawg"
-            exit 1
-        fi
-
-        echo "70"
+        echo "80"
         echo "XXX"
         echo "Генерация ключей и конфигурации..."
         echo "XXX"
