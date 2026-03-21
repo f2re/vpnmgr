@@ -171,11 +171,42 @@ users_sync_to_xray() {
 }
 
 # Синхронизация пользователей с конфигом Hysteria 2
+# Полная регенерация конфига из protocols.json + server.json (не парсим текущий файл)
 users_sync_to_hysteria() {
-    [[ ! -f "$HYSTERIA_CONFIG" ]] && return 0
     [[ ! -f "$USERS_JSON" ]] && return 0
+    [[ ! -f "$PROTOCOLS_JSON" ]] && return 0
 
-    # Собираем пары name:password активных пользователей с включённым hysteria2
+    # Hysteria установлен?
+    [[ ! -x "$HYSTERIA_BIN" ]] && return 0
+
+    mkdir -p "$HYSTERIA_CONFIG_DIR"
+
+    # Параметры из protocols.json
+    local port masquerade_url obfs obfs_password
+    port=$(jq -r '.hysteria2.port // 8443' "$PROTOCOLS_JSON" 2>/dev/null)
+    masquerade_url=$(jq -r '.hysteria2.masquerade_url // "https://www.google.com"' "$PROTOCOLS_JSON" 2>/dev/null)
+    obfs=$(jq -r '.hysteria2.obfs // ""' "$PROTOCOLS_JSON" 2>/dev/null)
+    obfs_password=$(jq -r '.hysteria2.obfs_password // ""' "$PROTOCOLS_JSON" 2>/dev/null)
+
+    # Путь к сертификатам
+    local cert_path key_path
+    cert_path=$(jq -r '.cert_path // ""' "$SERVER_JSON" 2>/dev/null || echo "")
+    key_path=$(jq -r '.key_path // ""' "$SERVER_JSON" 2>/dev/null || echo "")
+
+    # Если нет внешних — используем самоподписанные
+    if [[ -z "$cert_path" || -z "$key_path" || ! -f "$cert_path" || ! -f "$key_path" ]]; then
+        local hy_cert_dir="$HYSTERIA_CONFIG_DIR/certs"
+        mkdir -p "$hy_cert_dir"
+        if [[ ! -f "$hy_cert_dir/cert.pem" ]]; then
+            openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+                -keyout "$hy_cert_dir/key.pem" -out "$hy_cert_dir/cert.pem" \
+                -days 3650 -nodes -subj "/CN=hysteria" 2>/dev/null
+        fi
+        cert_path="$hy_cert_dir/cert.pem"
+        key_path="$hy_cert_dir/key.pem"
+    fi
+
+    # Собираем пользователей
     local userpass_json
     userpass_json=$(jq -c '[.users[] |
         select(.enabled == true and .protocols.hysteria2.enabled == true) |
@@ -183,35 +214,28 @@ users_sync_to_hysteria() {
         {"name": .name, "password": .protocols.hysteria2.password}]' \
         "$USERS_JSON" 2>/dev/null)
 
-    # Читаем TLS-блок из текущего конфига (всё до строки auth:)
-    local tls_block
-    tls_block=$(sed -n '1,/^auth:/{/^auth:/d;p}' "$HYSTERIA_CONFIG")
-
-    # Параметры из protocols.json
-    local masquerade_url obfs obfs_password
-    masquerade_url=$(jq -r '.hysteria2.masquerade_url // "https://www.google.com"' "$PROTOCOLS_JSON" 2>/dev/null)
-    obfs=$(jq -r '.hysteria2.obfs // ""' "$PROTOCOLS_JSON" 2>/dev/null)
-    obfs_password=$(jq -r '.hysteria2.obfs_password // ""' "$PROTOCOLS_JSON" 2>/dev/null)
+    local user_count
+    user_count=$(echo "$userpass_json" | jq 'length' 2>/dev/null || echo 0)
 
     local tmp="${HYSTERIA_CONFIG}.tmp.$$"
 
-    # Генерируем конфиг
     {
-        echo "$tls_block"
+        echo "listen: :${port}"
+        echo ""
+        echo "tls:"
+        echo "  cert: ${cert_path}"
+        echo "  key: ${key_path}"
+        echo ""
         echo "auth:"
         echo "  type: userpass"
 
-        local user_count
-        user_count=$(echo "$userpass_json" | jq 'length' 2>/dev/null || echo 0)
-
         if [[ "$user_count" -eq 0 ]]; then
-            # Нет пользователей — пустой словарь (никто не может подключиться)
             echo "  userpass: {}"
         else
             echo "  userpass:"
             while IFS=$'\t' read -r uname upass; do
                 [[ -z "$uname" || -z "$upass" ]] && continue
-                echo "    \"${uname}\": \"${upass}\""
+                printf '    "%s": "%s"\n' "$uname" "$upass"
             done < <(echo "$userpass_json" | jq -r '.[] | [.name, .password] | @tsv')
         fi
 
@@ -243,8 +267,6 @@ users_sync_to_hysteria() {
         systemctl restart "$HYSTERIA_SERVICE" 2>/dev/null || true
     fi
 
-    local user_count
-    user_count=$(echo "$userpass_json" | jq 'length' 2>/dev/null || echo 0)
     log_info "Синхронизация Hysteria 2: $user_count активных клиентов"
 }
 
