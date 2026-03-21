@@ -100,10 +100,8 @@ UNIT
         echo "Генерация конфигурации..."
         echo "XXX"
 
-        # Генерируем конфиг только если он не существует
-        if [[ ! -f "$HYSTERIA_CONFIG" ]]; then
-            hysteria_generate_config
-        fi
+        # Всегда генерируем конфиг при установке (чтобы сбросить старый сломанный)
+        hysteria_generate_config
 
         # Синхронизируем пользователей если есть
         users_sync_to_hysteria 2>/dev/null || true

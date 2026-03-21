@@ -29,7 +29,7 @@ _socks5_get_port() {
 }
 
 socks5_is_installed() {
-    command -v danted >/dev/null 2>&1
+    command -v danted >/dev/null 2>&1 || [[ -x /usr/sbin/danted ]] || dpkg -l dante-server >/dev/null 2>&1
 }
 
 socks5_is_running() {
@@ -54,8 +54,21 @@ socks5_install() {
     fi
 
     if ! check_port_available "$port"; then
-        ui_error "Порт $port уже занят."
-        return
+        local occupied_by
+        occupied_by=$(ss -tlnH 2>/dev/null | awk '{print $4, $6}' | grep -E ":${port}$" | head -1)
+        if ! ui_confirm "Порт $port уже занят.\n${occupied_by}\n\nВыбрать другой порт?"; then
+            return
+        fi
+        port=$(ui_input "Введите другой порт:" "1081" "SOCKS5 установка") || return
+        [[ -z "$port" ]] && return
+        if ! [[ "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
+            ui_error "Некорректный порт."
+            return
+        fi
+        if ! check_port_available "$port"; then
+            ui_error "Порт $port тоже занят. Освободите порт вручную и повторите."
+            return
+        fi
     fi
 
     {
@@ -180,8 +193,21 @@ socks5_change_port() {
     fi
 
     if ! check_port_available "$port"; then
-        ui_error "Порт $port уже занят."
-        return
+        local occupied_by
+        occupied_by=$(ss -tlnH 2>/dev/null | awk '{print $4, $6}' | grep -E ":${port}$" | head -1)
+        if ! ui_confirm "Порт $port уже занят.\n${occupied_by}\n\nВыбрать другой порт?"; then
+            return
+        fi
+        port=$(ui_input "Введите другой порт:" "$((port + 1))" "Смена порта") || return
+        [[ -z "$port" ]] && return
+        if ! [[ "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
+            ui_error "Некорректный порт."
+            return
+        fi
+        if ! check_port_available "$port"; then
+            ui_error "Порт $port тоже занят. Освободите порт вручную и повторите."
+            return
+        fi
     fi
 
     socks5_write_config "$port"

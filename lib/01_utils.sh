@@ -67,6 +67,6 @@ validate_username() {
 # Проверка доступности порта (TCP и UDP)
 check_port_available() {
     local port="$1"
-    ! ss -tlnp 2>/dev/null | grep -q ":${port} " && \
-    ! ss -ulnp 2>/dev/null | grep -q ":${port} "
+    ! ss -tlnH 2>/dev/null | awk '{print $4}' | grep -qE ":${port}$" && \
+    ! ss -ulnH 2>/dev/null | awk '{print $4}' | grep -qE ":${port}$"
 }
