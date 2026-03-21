@@ -47,8 +47,8 @@ _connection_hysteria2_uri() {
     local port
     port=$(jq -r '.hysteria2.port // 8443' "$PROTOCOLS_JSON" 2>/dev/null || echo "8443")
 
-    printf 'hysteria2://%s@%s:%s?insecure=1#%s' \
-        "$password" "$server_ip" "$port" "$user_name"
+    printf 'hysteria2://%s:%s@%s:%s?insecure=1#%s' \
+        "$user_name" "$password" "$server_ip" "$port" "$user_name"
 }
 
 # Показывает QR-код в терминале

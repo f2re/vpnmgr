@@ -193,8 +193,8 @@ listen: :${port}
 ${tls_block}
 
 auth:
-  type: password
-  password: {}
+  type: userpass
+  userpass: {}
 
 masquerade:
   type: proxy

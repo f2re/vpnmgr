@@ -175,11 +175,12 @@ users_sync_to_hysteria() {
     [[ ! -f "$HYSTERIA_CONFIG" ]] && return 0
     [[ ! -f "$USERS_JSON" ]] && return 0
 
-    # Собираем пароли активных пользователей с включённым hysteria2
-    local passwords
-    passwords=$(jq -r '[.users[] |
+    # Собираем пары name:password активных пользователей с включённым hysteria2
+    local userpass_json
+    userpass_json=$(jq -c '[.users[] |
         select(.enabled == true and .protocols.hysteria2.enabled == true) |
-        .protocols.hysteria2.password] | map(select(. != null and . != "")) | .[]' \
+        select(.protocols.hysteria2.password != null and .protocols.hysteria2.password != "") |
+        {"name": .name, "password": .protocols.hysteria2.password}]' \
         "$USERS_JSON" 2>/dev/null)
 
     # Читаем TLS-блок из текущего конфига (всё до строки auth:)
@@ -198,17 +199,20 @@ users_sync_to_hysteria() {
     {
         echo "$tls_block"
         echo "auth:"
-        echo "  type: password"
+        echo "  type: userpass"
 
-        # Если нет пользователей — пустой словарь на одной строке
-        if [[ -z "$passwords" ]]; then
-            echo "  password: {}"
+        local user_count
+        user_count=$(echo "$userpass_json" | jq 'length' 2>/dev/null || echo 0)
+
+        if [[ "$user_count" -eq 0 ]]; then
+            # Нет пользователей — пустой словарь (никто не может подключиться)
+            echo "  userpass: {}"
         else
-            echo "  password:"
-            while IFS= read -r p; do
-                [[ -z "$p" ]] && continue
-                echo "    \"${p}\": true"
-            done <<< "$passwords"
+            echo "  userpass:"
+            while IFS=$'\t' read -r uname upass; do
+                [[ -z "$uname" || -z "$upass" ]] && continue
+                echo "    \"${uname}\": \"${upass}\""
+            done < <(echo "$userpass_json" | jq -r '.[] | [.name, .password] | @tsv')
         fi
 
         echo ""
@@ -239,10 +243,8 @@ users_sync_to_hysteria() {
         systemctl restart "$HYSTERIA_SERVICE" 2>/dev/null || true
     fi
 
-    local user_count=0
-    if [[ -n "$passwords" ]]; then
-        user_count=$(echo "$passwords" | wc -l | tr -d ' ')
-    fi
+    local user_count
+    user_count=$(echo "$userpass_json" | jq 'length' 2>/dev/null || echo 0)
     log_info "Синхронизация Hysteria 2: $user_count активных клиентов"
 }
 

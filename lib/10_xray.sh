@@ -75,6 +75,12 @@ xray_install() {
         install -m 755 "$tmp_dir/xray" "$XRAY_BIN"
         mkdir -p "$XRAY_CONFIG_DIR"
 
+        # Устанавливаем GeoData файлы (нужны для правил роутинга geoip:/geosite:)
+        local geo_dir="/usr/local/share/xray"
+        mkdir -p "$geo_dir"
+        [[ -f "$tmp_dir/geoip.dat"   ]] && install -m 644 "$tmp_dir/geoip.dat"   "$geo_dir/"
+        [[ -f "$tmp_dir/geosite.dat" ]] && install -m 644 "$tmp_dir/geosite.dat" "$geo_dir/"
+
         echo "75"
         echo "XXX"
         echo "Создание systemd сервиса..."
@@ -88,6 +94,7 @@ After=network.target nss-lookup.target
 
 [Service]
 User=root
+Environment=XRAY_LOCATION_ASSET=/usr/local/share/xray
 ExecStart=/usr/local/bin/xray run -config /etc/xray/config.json
 Restart=on-failure
 RestartSec=3s
