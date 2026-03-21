@@ -15,9 +15,39 @@ source "$BASE_DIR/lib/02_checks.sh"
 source "$BASE_DIR/lib/03_ui.sh"
 source "$BASE_DIR/lib/10_xray.sh"
 source "$BASE_DIR/lib/11_hysteria.sh"
+source "$BASE_DIR/lib/12_amnezia.sh"
+source "$BASE_DIR/lib/13_socks5.sh"
 source "$BASE_DIR/lib/20_users.sh"
 source "$BASE_DIR/lib/30_monitor.sh"
 source "$BASE_DIR/lib/40_connection.sh"
+source "$BASE_DIR/lib/50_backup.sh"
+source "$BASE_DIR/lib/51_updater.sh"
+
+# --- Обработка аргументов CLI (до проверки root/whiptail — для cron) ---
+
+case "${1:-}" in
+    --backup-silent)
+        mkdir -p "$LOGS_DIR"
+        touch "$MAIN_LOG"
+        backup_create_silent
+        exit 0
+        ;;
+    --check-cert)
+        mkdir -p "$LOGS_DIR"
+        touch "$MAIN_LOG"
+        _cert_path=$(jq -r '.cert_path // ""' "$SERVER_JSON" 2>/dev/null || echo "")
+        if [[ -n "$_cert_path" && -f "$_cert_path" ]]; then
+            _expiry=$(openssl x509 -enddate -noout -in "$_cert_path" 2>/dev/null | cut -d= -f2)
+            _expiry_epoch=$(date -d "$_expiry" +%s 2>/dev/null || echo "0")
+            _now_epoch=$(date +%s)
+            _days_left=$(( (_expiry_epoch - _now_epoch) / 86400 ))
+            if [[ "$_days_left" -lt 14 ]]; then
+                log_warn "TLS сертификат истекает через $_days_left дней: $_cert_path"
+            fi
+        fi
+        exit 0
+        ;;
+esac
 
 # --- Обработчики сигналов ---
 
@@ -49,43 +79,57 @@ trap '_on_int'           INT TERM
 # --- Меню ---
 
 protocols_menu() {
+    local _saved_backtitle="$WT_BACKTITLE"
+    WT_BACKTITLE="$WT_BACKTITLE  >  Протоколы"
     while true; do
         local choice
         choice=$(ui_menu "Управление протоколами" \
             "x" "VLESS + XHTTP (Xray)" \
             "h" "Hysteria 2" \
-            "a" "AmneziaWG (в разработке)" \
+            "a" "AmneziaWG" \
+            "s" "SOCKS5 (локальный прокси)" \
             "0" "Назад") || break
 
         case "$choice" in
-            x) xray_manage ;;
+            x) xray_manage     ;;
             h) hysteria_manage ;;
-            a) ui_msgbox "AmneziaWG находится в разработке." ;;
-            0) return ;;
+            a) amnezia_manage  ;;
+            s) socks5_manage   ;;
+            0) break           ;;
         esac
     done
+    WT_BACKTITLE="$_saved_backtitle"
 }
 
 main_menu() {
     while true; do
+        # Актуальная информация для шапки
+        local user_count=0
+        [[ -f "$USERS_JSON" ]] && user_count=$(jq '.users | length' "$USERS_JSON" 2>/dev/null || echo 0)
+        local server_ip
+        server_ip=$(jq -r '.ip // ""' "$SERVER_JSON" 2>/dev/null || echo "")
+        [[ -z "$server_ip" ]] && server_ip="не задан"
+
+        local header="Сервер: $server_ip | Пользователей: $user_count"
+
         local choice
-        choice=$(ui_menu "Выберите раздел для управления сервером:" \
+        choice=$(ui_menu "$header" \
             "1" "Статус системы" \
             "2" "Протоколы" \
             "3" "Пользователи" \
             "4" "Мониторинг и логи" \
-            "5" "Бэкап и восстановление (в разработке)" \
-            "6" "Обновления (в разработке)" \
+            "5" "Бэкап и восстановление" \
+            "6" "Обновления" \
             "0" "Выход") || break
 
         case "$choice" in
-            1) monitor_status ;;
-            2) protocols_menu ;;
-            3) user_manage ;;
-            4) monitor_manage ;;
-            5) ui_msgbox "Раздел 'Бэкап' находится в разработке." ;;
-            6) ui_msgbox "Раздел 'Обновления' находится в разработке." ;;
-            0|*) exit 0 ;;
+            1) monitor_status  ;;
+            2) protocols_menu  ;;
+            3) user_manage     ;;
+            4) monitor_manage  ;;
+            5) backup_manage   ;;
+            6) updater_manage  ;;
+            0|*) exit 0        ;;
         esac
     done
 }

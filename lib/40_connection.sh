@@ -26,8 +26,6 @@ _connection_vless_uri() {
             "$XRAY_CONFIG" 2>/dev/null || echo "/")
     fi
 
-    # URL-кодируем путь (замена / на %2F не нужна в этом контексте)
-    # Формат: vless://uuid@host:port?encryption=none&type=xhttp&path=/xxx#name
     printf 'vless://%s@%s:%s?encryption=none&type=xhttp&path=%s#%s' \
         "$uuid" "$server_ip" "$port" "$xhttp_path" "$user_name"
 }
@@ -68,6 +66,21 @@ _show_qr() {
     echo ""
 }
 
+# Показывает QR-код из файла
+_show_qr_file() {
+    local file="$1"
+    local label="${2:-}"
+
+    if ! is_installed "qrencode"; then
+        echo "(qrencode не установлен — QR недоступен)"
+        return
+    fi
+
+    [[ -n "$label" ]] && echo "=== $label ==="
+    qrencode -t ANSIUTF8 -o - < "$file" 2>/dev/null || echo "(ошибка генерации QR)"
+    echo ""
+}
+
 connection_show() {
     local user_name="$1"
 
@@ -87,6 +100,13 @@ connection_show() {
     vless_uri=$(_connection_vless_uri    "$user_name" 2>/dev/null || echo "")
     hysteria_uri=$(_connection_hysteria2_uri "$user_name" 2>/dev/null || echo "")
 
+    # Проверяем AmneziaWG пир
+    local amnezia_conf=""
+    local amnezia_peer_dir="/etc/amneziawg/peers/$user_name"
+    if [[ -f "$amnezia_peer_dir/client.conf" ]]; then
+        amnezia_conf="$amnezia_peer_dir/client.conf"
+    fi
+
     # Строим сообщение
     local msg="=== Подключение: $user_name ===\n\n"
 
@@ -97,20 +117,33 @@ connection_show() {
     fi
 
     if [[ -n "$hysteria_uri" ]]; then
-        msg+="Hysteria 2:\n$hysteria_uri"
+        msg+="Hysteria 2:\n$hysteria_uri\n\n"
     else
-        msg+="Hysteria 2: нет данных (Hysteria не настроена?)"
+        msg+="Hysteria 2: нет данных (Hysteria не настроена?)\n\n"
+    fi
+
+    if [[ -n "$amnezia_conf" ]]; then
+        msg+="AmneziaWG: конфиг доступен (показать через QR)"
+    else
+        msg+="AmneziaWG: пир не создан"
     fi
 
     ui_msgbox "$msg" "Подключение: $user_name"
 
-    # Предлагаем QR если qrencode доступен
-    if is_installed "qrencode" && [[ -n "$vless_uri" || -n "$hysteria_uri" ]]; then
+    # Предлагаем QR
+    local has_qr=false
+    is_installed "qrencode" && has_qr=true
+
+    if $has_qr && [[ -n "$vless_uri" || -n "$hysteria_uri" || -n "$amnezia_conf" ]]; then
+        # Собираем доступные варианты QR
+        local qr_items=()
+        [[ -n "$vless_uri" ]]    && qr_items+=("1" "QR для VLESS+XHTTP")
+        [[ -n "$hysteria_uri" ]] && qr_items+=("2" "QR для Hysteria 2")
+        [[ -n "$amnezia_conf" ]] && qr_items+=("3" "QR для AmneziaWG")
+        qr_items+=("0" "Назад")
+
         local qr_choice
-        qr_choice=$(ui_menu "Показать QR-код:" \
-            "1" "QR для VLESS+XHTTP" \
-            "2" "QR для Hysteria 2" \
-            "0" "Назад") || return
+        qr_choice=$(ui_menu "Показать QR-код:" "${qr_items[@]}") || return
 
         clear
         case "$qr_choice" in
@@ -118,16 +151,19 @@ connection_show() {
                 if [[ -n "$vless_uri" ]]; then
                     _show_qr "$vless_uri" "VLESS+XHTTP — $user_name"
                     echo "URI: $vless_uri"
-                else
-                    echo "VLESS URI недоступен."
                 fi
                 ;;
             2)
                 if [[ -n "$hysteria_uri" ]]; then
                     _show_qr "$hysteria_uri" "Hysteria 2 — $user_name"
                     echo "URI: $hysteria_uri"
-                else
-                    echo "Hysteria 2 URI недоступен."
+                fi
+                ;;
+            3)
+                if [[ -n "$amnezia_conf" ]]; then
+                    _show_qr_file "$amnezia_conf" "AmneziaWG — $user_name"
+                    echo ""
+                    cat "$amnezia_conf"
                 fi
                 ;;
             0) return ;;

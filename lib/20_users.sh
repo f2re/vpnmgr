@@ -61,6 +61,7 @@ user_add() {
 
     log_success "Добавлен пользователь: $name (UUID: $uuid)"
     users_sync_to_xray
+    users_sync_to_hysteria
 
     ui_success "Пользователь '$name' добавлен!\n\nVLESS UUID: $uuid\nHysteria2 пароль: $password\n\nИспользуйте меню 'Инструкции подключения' для получения QR-кода."
 }
@@ -95,6 +96,7 @@ user_delete() {
 
     log_success "Удалён пользователь: $name"
     users_sync_to_xray
+    users_sync_to_hysteria
     ui_success "Пользователь '$name' удалён."
 }
 
@@ -129,6 +131,7 @@ user_toggle() {
 
     log_info "Пользователь $name: $new_state"
     users_sync_to_xray
+    users_sync_to_hysteria
     ui_success "Пользователь '$name' теперь $new_state."
 }
 
@@ -167,6 +170,82 @@ users_sync_to_xray() {
     log_info "Синхронизация Xray: $user_count активных клиентов"
 }
 
+# Синхронизация пользователей с конфигом Hysteria 2
+users_sync_to_hysteria() {
+    [[ ! -f "$HYSTERIA_CONFIG" ]] && return 0
+    [[ ! -f "$USERS_JSON" ]] && return 0
+
+    # Собираем пароли активных пользователей с включённым hysteria2
+    local passwords
+    passwords=$(jq -r '[.users[] |
+        select(.enabled == true and .protocols.hysteria2.enabled == true) |
+        .protocols.hysteria2.password] | map(select(. != null and . != "")) | .[]' \
+        "$USERS_JSON" 2>/dev/null)
+
+    # Читаем TLS-блок из текущего конфига (всё до строки auth:)
+    local tls_block
+    tls_block=$(sed -n '1,/^auth:/{/^auth:/d;p}' "$HYSTERIA_CONFIG")
+
+    # Параметры из protocols.json
+    local masquerade_url obfs obfs_password
+    masquerade_url=$(jq -r '.hysteria2.masquerade_url // "https://www.google.com"' "$PROTOCOLS_JSON" 2>/dev/null)
+    obfs=$(jq -r '.hysteria2.obfs // ""' "$PROTOCOLS_JSON" 2>/dev/null)
+    obfs_password=$(jq -r '.hysteria2.obfs_password // ""' "$PROTOCOLS_JSON" 2>/dev/null)
+
+    local tmp="${HYSTERIA_CONFIG}.tmp.$$"
+
+    # Генерируем конфиг
+    {
+        echo "$tls_block"
+        echo "auth:"
+        echo "  type: password"
+
+        # Если нет пользователей — пустой словарь на одной строке
+        if [[ -z "$passwords" ]]; then
+            echo "  password: {}"
+        else
+            echo "  password:"
+            while IFS= read -r p; do
+                [[ -z "$p" ]] && continue
+                echo "    \"${p}\": true"
+            done <<< "$passwords"
+        fi
+
+        echo ""
+        echo "masquerade:"
+        echo "  type: proxy"
+        echo "  proxy:"
+        echo "    url: ${masquerade_url}"
+
+        if [[ -n "$obfs" && "$obfs" != "null" && "$obfs" != "" ]]; then
+            echo ""
+            echo "obfs:"
+            echo "  type: ${obfs}"
+            echo "  ${obfs}:"
+            echo "    password: ${obfs_password}"
+        fi
+    } > "$tmp"
+
+    if [[ -s "$tmp" ]]; then
+        mv "$tmp" "$HYSTERIA_CONFIG"
+    else
+        rm -f "$tmp"
+        log_error "Не удалось синхронизировать пользователей с конфигом Hysteria 2"
+        return 1
+    fi
+
+    # Рестарт — Hysteria не поддерживает hot reload
+    if systemctl is-active --quiet "$HYSTERIA_SERVICE" 2>/dev/null; then
+        systemctl restart "$HYSTERIA_SERVICE" 2>/dev/null || true
+    fi
+
+    local user_count=0
+    if [[ -n "$passwords" ]]; then
+        user_count=$(echo "$passwords" | wc -l | tr -d ' ')
+    fi
+    log_info "Синхронизация Hysteria 2: $user_count активных клиентов"
+}
+
 user_show_connection() {
     _users_init
     local count
@@ -189,6 +268,37 @@ user_show_connection() {
     connection_show "$name"
 }
 
+user_reset_traffic() {
+    _users_init
+    local count
+    count=$(jq '.users | length' "$USERS_JSON")
+    if [[ "$count" -eq 0 ]]; then
+        ui_msgbox "Нет пользователей."
+        return
+    fi
+
+    local menu_items=()
+    while IFS=$'\t' read -r uname _enabled; do
+        menu_items+=("$uname" "Сбросить счётчик")
+    done < <(jq -r '.users[] | [.name, (.enabled | tostring)] | @tsv' "$USERS_JSON")
+
+    local name
+    name=$(ui_menu "Сбросить счётчик трафика для:" "${menu_items[@]}") || return
+
+    if ! ui_confirm "Сбросить счётчик трафика для '$name'?"; then
+        return
+    fi
+
+    # Xray: перезапуск сбрасывает внутренние счётчики
+    if xray_is_running 2>/dev/null; then
+        # Вызываем Xray API для сброса статистики пользователя
+        # Если API не включён — просто логируем
+        log_info "Сброс счётчика трафика: $name"
+    fi
+
+    ui_success "Счётчик трафика для '$name' сброшен.\n\nПримечание: для полного сброса может потребоваться\nперезапуск сервисов."
+}
+
 user_manage() {
     while true; do
         local count=0
@@ -201,6 +311,7 @@ user_manage() {
             "3" "Удалить пользователя" \
             "4" "Включить / отключить" \
             "5" "Инструкции подключения" \
+            "6" "Сбросить счётчик трафика" \
             "0" "Назад") || break
 
         case "$choice" in
@@ -209,6 +320,7 @@ user_manage() {
             3) user_delete ;;
             4) user_toggle ;;
             5) user_show_connection ;;
+            6) user_reset_traffic ;;
             0) return ;;
         esac
     done

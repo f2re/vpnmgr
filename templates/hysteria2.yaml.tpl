@@ -6,7 +6,7 @@ auth:
   type: password
   password:
     {{CLIENTS}}
-masquarade:
+masquerade:
   type: proxy
   proxy:
     url: {{MASQUERADE_URL}}
