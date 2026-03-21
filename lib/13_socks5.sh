@@ -71,32 +71,77 @@ socks5_install() {
         fi
     fi
 
+    log_info "SOCKS5: начало установки dante-server (порт $port)"
+
+    local install_log
+    install_log=$(mktemp)
+
     {
         echo "10"
         echo "XXX"
         echo "Обновление списка пакетов..."
         echo "XXX"
-        apt-get update -qq 2>/dev/null
+        log_info "SOCKS5: apt-get update..."
+        if apt-get update -qq >> "$install_log" 2>&1; then
+            log_info "SOCKS5: apt-get update — успешно"
+        else
+            log_error "SOCKS5: apt-get update — ошибка (код $?)"
+            log_error "SOCKS5: вывод apt-get update: $(cat "$install_log" 2>/dev/null)"
+        fi
+
         echo "40"
         echo "XXX"
         echo "Установка dante-server..."
         echo "XXX"
-        apt-get install -y dante-server 2>/dev/null
+        log_info "SOCKS5: apt-get install dante-server..."
+        if apt-get install -y dante-server >> "$install_log" 2>&1; then
+            log_info "SOCKS5: dante-server установлен успешно"
+        else
+            log_error "SOCKS5: apt-get install dante-server — ошибка (код $?)"
+            log_error "SOCKS5: вывод apt-get: $(tail -30 "$install_log" 2>/dev/null)"
+        fi
+
         echo "70"
         echo "XXX"
         echo "Настройка конфигурации..."
         echo "XXX"
+        log_info "SOCKS5: запись конфигурации $SOCKS5_CONFIG (порт $port)"
         socks5_write_config "$port"
+        log_info "SOCKS5: конфигурация записана"
+
         echo "90"
         echo "XXX"
         echo "Запуск сервиса..."
         echo "XXX"
-        systemctl enable "$SOCKS5_SERVICE" 2>/dev/null || true
-        systemctl restart "$SOCKS5_SERVICE" 2>/dev/null || true
+        log_info "SOCKS5: systemctl enable $SOCKS5_SERVICE..."
+        if systemctl enable "$SOCKS5_SERVICE" >> "$install_log" 2>&1; then
+            log_info "SOCKS5: systemctl enable — успешно"
+        else
+            log_warn "SOCKS5: systemctl enable — ошибка: $(tail -5 "$install_log" 2>/dev/null)"
+        fi
+
+        log_info "SOCKS5: systemctl restart $SOCKS5_SERVICE..."
+        if systemctl restart "$SOCKS5_SERVICE" >> "$install_log" 2>&1; then
+            log_info "SOCKS5: сервис запущен"
+        else
+            log_error "SOCKS5: systemctl restart — ошибка: $(tail -10 "$install_log" 2>/dev/null)"
+        fi
+
         _socks5_users_init
         echo "100"
     } | ui_progress "Установка SOCKS5 (dante)"
 
+    if ! socks5_is_installed; then
+        local err_tail
+        err_tail=$(tail -20 "$install_log" 2>/dev/null)
+        log_error "SOCKS5: установка провалилась — dante-server не обнаружен после установки"
+        log_error "SOCKS5: полный вывод: $err_tail"
+        rm -f "$install_log"
+        ui_error "Ошибка установки dante-server.\n\nВывод apt-get:\n${err_tail}\n\nПроверьте вручную:\n  apt-get install dante-server\n\nЛог: $MAIN_LOG"
+        return
+    fi
+
+    rm -f "$install_log"
     log_info "SOCKS5 (danted) установлен на порту $port"
     ui_success "SOCKS5 сервер установлен!\n\nПорт: $port\nАвторизация: username/password\n\nДобавьте пользователей через меню управления."
 }
@@ -111,19 +156,35 @@ socks5_uninstall() {
         return
     fi
 
+    log_info "SOCKS5: начало удаления dante-server"
+
     # Удаляем всех socks5-пользователей системы
     _socks5_users_init
     local users
     users=$(jq -r '.users[].username' "$SOCKS5_USERS_JSON" 2>/dev/null)
     while IFS= read -r u; do
         [[ -z "$u" ]] && continue
-        userdel "$u" 2>/dev/null || true
+        log_info "SOCKS5: удаление системного пользователя '$u'"
+        userdel "$u" 2>/dev/null || log_warn "SOCKS5: userdel '$u' завершился с ошибкой"
     done <<< "$users"
 
-    systemctl stop "$SOCKS5_SERVICE"    2>/dev/null || true
+    log_info "SOCKS5: systemctl stop $SOCKS5_SERVICE"
+    systemctl stop "$SOCKS5_SERVICE" 2>/dev/null \
+        && log_info "SOCKS5: сервис остановлен" \
+        || log_warn "SOCKS5: systemctl stop — ошибка (сервис уже остановлен?)"
+
+    log_info "SOCKS5: systemctl disable $SOCKS5_SERVICE"
     systemctl disable "$SOCKS5_SERVICE" 2>/dev/null || true
-    apt-get remove -y dante-server      2>/dev/null || true
+
+    log_info "SOCKS5: apt-get remove dante-server"
+    if apt-get remove -y dante-server 2>/dev/null; then
+        log_info "SOCKS5: dante-server удалён через apt"
+    else
+        log_warn "SOCKS5: apt-get remove вернул ненулевой код"
+    fi
+
     rm -f "$SOCKS5_CONFIG" "$SOCKS5_USERS_JSON"
+    log_info "SOCKS5: конфиг и данные пользователей удалены"
 
     log_info "SOCKS5 (danted) удалён"
     ui_success "SOCKS5 сервер удалён."
@@ -135,7 +196,13 @@ socks5_write_config() {
     local port="${1:-$SOCKS5_DEFAULT_PORT}"
     local iface
     iface=$(_socks5_get_interface)
-    [[ -z "$iface" ]] && iface="eth0"
+    if [[ -z "$iface" ]]; then
+        log_warn "SOCKS5: не удалось определить сетевой интерфейс, используем eth0"
+        iface="eth0"
+    else
+        log_info "SOCKS5: внешний интерфейс: $iface"
+    fi
+    log_info "SOCKS5: запись $SOCKS5_CONFIG (порт $port, интерфейс $iface)"
 
     cat > "$SOCKS5_CONFIG" <<EOF
 logoutput: $SOCKS5_LOG
@@ -230,14 +297,26 @@ socks5_start_stop() {
 
     if socks5_is_running; then
         if ui_confirm "Остановить SOCKS5 сервер?"; then
-            systemctl stop "$SOCKS5_SERVICE"
-            ui_success "SOCKS5 сервер остановлен."
+            log_info "SOCKS5: systemctl stop $SOCKS5_SERVICE"
+            if systemctl stop "$SOCKS5_SERVICE" 2>/dev/null; then
+                log_info "SOCKS5: сервис остановлен"
+                ui_success "SOCKS5 сервер остановлен."
+            else
+                log_error "SOCKS5: systemctl stop — ошибка (код $?)"
+                ui_error "Не удалось остановить SOCKS5.\n\nСм. journalctl -u danted -n 30"
+            fi
         fi
     else
+        log_info "SOCKS5: systemctl start $SOCKS5_SERVICE"
         systemctl start "$SOCKS5_SERVICE" 2>/dev/null
         if socks5_is_running; then
+            log_info "SOCKS5: сервис запущен"
             ui_success "SOCKS5 сервер запущен."
         else
+            local journal_tail
+            journal_tail=$(journalctl -u "$SOCKS5_SERVICE" -n 20 --no-pager 2>/dev/null || true)
+            log_error "SOCKS5: сервис не запустился"
+            log_error "SOCKS5: journal: $journal_tail"
             ui_error "Не удалось запустить SOCKS5.\n\nПроверьте логи:\n  journalctl -u danted -n 30"
         fi
     fi
@@ -275,13 +354,17 @@ socks5_user_add() {
         return
     fi
 
+    log_info "SOCKS5: useradd $username"
     useradd -M -s /usr/sbin/nologin "$username" 2>/dev/null || {
+        log_error "SOCKS5: useradd '$username' завершился с ошибкой (код $?)"
         ui_error "Ошибка создания системного пользователя."
         return
     }
 
     # Устанавливаем пароль
+    log_info "SOCKS5: установка пароля для $username"
     echo "${username}:${password}" | chpasswd 2>/dev/null || {
+        log_error "SOCKS5: chpasswd '$username' завершился с ошибкой (код $?)"
         userdel "$username" 2>/dev/null || true
         ui_error "Ошибка установки пароля."
         return
