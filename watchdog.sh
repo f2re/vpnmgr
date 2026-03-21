@@ -7,7 +7,15 @@
 
 set -uo pipefail
 
-BASE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Разрешаем симлинки
+_self="${BASH_SOURCE[0]}"
+while [[ -L "$_self" ]]; do
+    _dir=$(cd "$(dirname "$_self")" && pwd)
+    _self=$(readlink "$_self")
+    [[ "$_self" != /* ]] && _self="$_dir/$_self"
+done
+BASE_DIR=$(cd "$(dirname "$_self")" && pwd)
+unset _self _dir
 source "$BASE_DIR/lib/00_core.sh"
 
 WATCHDOG_LOG="$LOGS_DIR/watchdog.log"
