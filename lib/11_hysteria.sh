@@ -44,14 +44,18 @@ hysteria_install() {
     local tmp_dir
     tmp_dir=$(mktemp -d)
 
+    set +eo pipefail
     {
+        set -e
+        trap 'log_error "Hysteria: ошибка на шаге: $BASH_COMMAND (код $?)"' ERR
+
         echo "5"
         echo "XXX"
         echo "Скачивание Hysteria $version..."
         echo "XXX"
 
         if ! curl -L --silent --show-error "$download_url" -o "$tmp_dir/hysteria" 2>"$tmp_dir/curl.err"; then
-            echo "curl ошибка: $(cat "$tmp_dir/curl.err")" >> "$MAIN_LOG"
+            log_error "Hysteria: ошибка скачивания: $(cat "$tmp_dir/curl.err" 2>/dev/null)"
             rm -rf "$tmp_dir"
             exit 1
         fi
@@ -115,9 +119,10 @@ UNIT
         echo "Готово!"
         echo "XXX"
 
-    } | ui_progress "Установка Hysteria $version..." "Установка Hysteria 2"
+    } 2>>"$MAIN_LOG" | ui_progress "Установка Hysteria $version..." "Установка Hysteria 2"
 
-    local install_ok=$?
+    local install_ok=${PIPESTATUS[0]}
+    set -eo pipefail
     rm -rf "$tmp_dir"
 
     if [[ $install_ok -ne 0 ]]; then

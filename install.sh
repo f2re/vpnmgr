@@ -42,6 +42,17 @@ if [[ ! -f "$INSTALL_DIR/data/users.json" ]]; then
     echo '{"version":"1","users":[]}' > "$INSTALL_DIR/data/users.json"
 fi
 
+if [[ ! -f "$INSTALL_DIR/data/protocols.json" ]]; then
+    cat > "$INSTALL_DIR/data/protocols.json" <<EOF
+{
+  "xray": {"enabled": false, "version": "", "port": 443},
+  "hysteria2": {"enabled": false, "version": "", "port": 8443, "obfs": "salamander", "obfs_password": "", "masquerade_url": "https://www.google.com", "port_hopping": false, "port_hopping_range": "20000-40000"},
+  "amneziawg": {"enabled": false, "port": 51820},
+  "socks5": {"enabled": false, "port": 1080}
+}
+EOF
+fi
+
 if [[ ! -f "$INSTALL_DIR/data/server.json" ]]; then
     # Определяем IP сервера
     local_ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || echo "")

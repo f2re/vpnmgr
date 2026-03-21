@@ -43,14 +43,19 @@ xray_install() {
     tmp_dir=$(mktemp -d)
 
     # Устанавливаем через прогресс-бар
+    # Отключаем set -e чтобы ошибка в пайпе не убила весь скрипт молча
+    set +eo pipefail
     {
+        set -e
+        trap 'log_error "Xray: ошибка на шаге: $BASH_COMMAND (код $?)"' ERR
+
         echo "5"
         echo "XXX"
         echo "Скачивание Xray $version..."
         echo "XXX"
 
         if ! curl -L --silent --show-error "$download_url" -o "$tmp_dir/xray.zip" 2>"$tmp_dir/curl.err"; then
-            echo "curl ошибка: $(cat "$tmp_dir/curl.err")" >> "$MAIN_LOG"
+            log_error "Xray: ошибка скачивания: $(cat "$tmp_dir/curl.err" 2>/dev/null)"
             rm -rf "$tmp_dir"
             exit 1
         fi
@@ -120,9 +125,10 @@ UNIT
         echo "Готово!"
         echo "XXX"
 
-    } | ui_progress "Установка Xray $version..." "Установка Xray"
+    } 2>>"$MAIN_LOG" | ui_progress "Установка Xray $version..." "Установка Xray"
 
-    local install_ok=$?
+    local install_ok=${PIPESTATUS[0]}
+    set -eo pipefail
     rm -rf "$tmp_dir"
 
     if [[ $install_ok -ne 0 ]]; then

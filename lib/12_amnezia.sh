@@ -19,7 +19,11 @@ amnezia_is_running() {
 amnezia_install() {
     log_info "Начало установки AmneziaWG"
 
+    set +eo pipefail
     {
+        set -e
+        trap 'log_error "AmneziaWG: ошибка на шаге: $BASH_COMMAND (код $?)"' ERR
+
         echo "5"
         echo "XXX"
         echo "Добавление репозитория AmneziaWG..."
@@ -30,10 +34,25 @@ amnezia_install() {
         codename=$(lsb_release -cs 2>/dev/null || echo "bullseye")
 
         # Добавляем ключ и репозиторий
-        curl -fsSL https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/KEY.gpg \
-            | gpg --dearmor -o /usr/share/keyrings/amnezia-keyring.gpg 2>/dev/null || true
+        # --yes для gpg чтобы не спрашивал о перезаписи
+        if ! curl -fsSL https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/KEY.gpg \
+            | gpg --batch --yes --dearmor -o /usr/share/keyrings/amnezia-keyring.gpg; then
+            log_error "AmneziaWG: не удалось добавить GPG ключ (curl/gpg ошибка)"
+            exit 1
+        fi
 
-        echo "deb [signed-by=/usr/share/keyrings/amnezia-keyring.gpg] https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu focal main" \
+        # Определяем правильный codename для Ubuntu PPA
+        local ubuntu_codename="focal"
+        if [[ -f /etc/os-release ]]; then
+            local distro_id distro_codename
+            distro_id=$(. /etc/os-release && echo "${ID:-}")
+            distro_codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-}")
+            if [[ "$distro_id" == "ubuntu" && -n "$distro_codename" ]]; then
+                ubuntu_codename="$distro_codename"
+            fi
+        fi
+
+        echo "deb [signed-by=/usr/share/keyrings/amnezia-keyring.gpg] https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu $ubuntu_codename main" \
             > /etc/apt/sources.list.d/amnezia.list
 
         echo "30"
@@ -41,14 +60,20 @@ amnezia_install() {
         echo "Обновление пакетов..."
         echo "XXX"
 
-        apt-get update -qq 2>/dev/null
+        if ! apt-get update -qq; then
+            log_error "AmneziaWG: apt-get update завершился с ошибкой"
+            exit 1
+        fi
 
         echo "50"
         echo "XXX"
         echo "Установка amneziawg..."
         echo "XXX"
 
-        apt-get install -y -qq amneziawg amneziawg-tools 2>/dev/null
+        if ! apt-get install -y -qq amneziawg amneziawg-tools; then
+            log_error "AmneziaWG: не удалось установить пакеты amneziawg"
+            exit 1
+        fi
 
         echo "70"
         echo "XXX"
@@ -67,7 +92,7 @@ amnezia_install() {
         echo "XXX"
 
         # Включаем IP forwarding
-        sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
+        sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
         if ! grep -q "^net.ipv4.ip_forward=1" /etc/sysctl.conf 2>/dev/null; then
             echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
         fi
@@ -86,9 +111,12 @@ amnezia_install() {
         echo "Готово!"
         echo "XXX"
 
-    } | ui_progress "Установка AmneziaWG..." "Установка AmneziaWG"
+    } 2>>"$MAIN_LOG" | ui_progress "Установка AmneziaWG..." "Установка AmneziaWG"
 
-    if [[ $? -ne 0 ]]; then
+    local install_ok=${PIPESTATUS[0]}
+    set -eo pipefail
+
+    if [[ $install_ok -ne 0 ]]; then
         ui_error "Ошибка установки AmneziaWG.\nПодробности: $MAIN_LOG"
         return 1
     fi

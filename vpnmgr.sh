@@ -3,7 +3,7 @@
 # VPN Manager (vpnmgr) - Главная точка входа
 # Цель: Управление VPN протоколами через TUI
 
-set -euo pipefail
+set -Eeuo pipefail
 
 # Определение базовой директории (разрешаем симлинки)
 _self="${BASH_SOURCE[0]}"
@@ -146,6 +146,19 @@ main_menu() {
 init() {
     mkdir -p "$DATA_DIR" "$LOGS_DIR" "$BACKUPS_DIR" "$TEMPLATES_DIR"
     touch "$MAIN_LOG"
+
+    # Инициализация protocols.json если не существует
+    if [[ ! -f "$PROTOCOLS_JSON" ]]; then
+        cat > "$PROTOCOLS_JSON" <<'PJSON'
+{
+  "xray": {"enabled": false, "version": "", "port": 443},
+  "hysteria2": {"enabled": false, "version": "", "port": 8443, "obfs": "salamander", "obfs_password": "", "masquerade_url": "https://www.google.com", "port_hopping": false, "port_hopping_range": "20000-40000"},
+  "amneziawg": {"enabled": false, "port": 51820},
+  "socks5": {"enabled": false, "port": 1080}
+}
+PJSON
+        log_info "Создан protocols.json"
+    fi
 
     if [[ "$OSTYPE" == "linux-gnu"* ]]; then
         check_root_permissions
