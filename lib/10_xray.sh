@@ -2,26 +2,342 @@
 
 # lib/10_xray.sh - Управление Xray (VLESS+XHTTP)
 
-xray_install() {
-    log_info "Начало установки Xray"
-    # Логика загрузки и установки xray-core
-    ui_msgbox "Установка Xray завершена (заглушка)."
+XRAY_RELEASES_API="https://api.github.com/repos/XTLS/Xray-core/releases/latest"
+XRAY_SYSTEMD_SERVICE_FILE="/etc/systemd/system/${XRAY_SERVICE}.service"
+
+xray_is_installed() {
+    [[ -x "$XRAY_BIN" ]]
 }
 
-xray_manage() {
-    local choice
-    choice=$(ui_menu "Управление Xray" \
-        "a" "Установить" \
-        "b" "Запустить/Остановить" \
-        "c" "Перезапустить" \
-        "d" "Просмотреть конфиг" \
-        "e" "Изменить порт" \
-        "f" "Удалить" \
-        "0" "Назад")
+xray_is_running() {
+    systemctl is-active --quiet "$XRAY_SERVICE" 2>/dev/null
+}
 
-    case "$choice" in
-        a) xray_install ;;
-        0) return ;;
-        *) ui_msgbox "Функция в разработке" ;;
+# --- Установка ---
+
+xray_install() {
+    log_info "Начало установки Xray"
+
+    # Определяем архитектуру
+    local arch
+    case "$(uname -m)" in
+        x86_64)  arch="64"        ;;
+        aarch64) arch="arm64-v8a" ;;
+        armv7l)  arch="arm32-v7a" ;;
+        *)
+            ui_error "Неподдерживаемая архитектура: $(uname -m)"
+            return 1
+            ;;
     esac
+
+    # Получаем последнюю версию
+    local version
+    version=$(curl -s --max-time 10 "$XRAY_RELEASES_API" 2>/dev/null | jq -r '.tag_name // empty')
+    if [[ -z "$version" ]]; then
+        ui_error "Не удалось получить версию Xray.\nПроверьте интернет-соединение."
+        return 1
+    fi
+
+    local download_url="https://github.com/XTLS/Xray-core/releases/download/${version}/Xray-linux-${arch}.zip"
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+
+    # Устанавливаем через прогресс-бар
+    {
+        echo "5"
+        echo "XXX"
+        echo "Скачивание Xray $version..."
+        echo "XXX"
+
+        if ! curl -L --silent --show-error "$download_url" -o "$tmp_dir/xray.zip" 2>"$tmp_dir/curl.err"; then
+            echo "curl ошибка: $(cat "$tmp_dir/curl.err")" >> "$MAIN_LOG"
+            rm -rf "$tmp_dir"
+            exit 1
+        fi
+
+        echo "50"
+        echo "XXX"
+        echo "Распаковка..."
+        echo "XXX"
+
+        unzip -q "$tmp_dir/xray.zip" -d "$tmp_dir/"
+
+        echo "65"
+        echo "XXX"
+        echo "Установка бинарного файла..."
+        echo "XXX"
+
+        install -m 755 "$tmp_dir/xray" "$XRAY_BIN"
+        mkdir -p "$XRAY_CONFIG_DIR"
+
+        echo "75"
+        echo "XXX"
+        echo "Создание systemd сервиса..."
+        echo "XXX"
+
+        cat > "$XRAY_SYSTEMD_SERVICE_FILE" <<'UNIT'
+[Unit]
+Description=Xray Service
+Documentation=https://github.com/XTLS/Xray-core
+After=network.target nss-lookup.target
+
+[Service]
+User=root
+ExecStart=/usr/local/bin/xray run -config /etc/xray/config.json
+Restart=on-failure
+RestartSec=3s
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+        systemctl daemon-reload
+
+        echo "85"
+        echo "XXX"
+        echo "Генерация конфигурации..."
+        echo "XXX"
+
+        # Генерируем конфиг только если он не существует
+        if [[ ! -f "$XRAY_CONFIG" ]]; then
+            xray_generate_config
+        fi
+
+        # Синхронизируем пользователей если есть
+        users_sync_to_xray 2>/dev/null || true
+
+        echo "90"
+        echo "XXX"
+        echo "Запуск сервиса..."
+        echo "XXX"
+
+        systemctl enable --quiet "$XRAY_SERVICE"
+        systemctl start "$XRAY_SERVICE"
+
+        echo "100"
+        echo "XXX"
+        echo "Готово!"
+        echo "XXX"
+
+    } | ui_progress "Установка Xray $version..." "Установка Xray"
+
+    local install_ok=$?
+    rm -rf "$tmp_dir"
+
+    if [[ $install_ok -ne 0 ]]; then
+        ui_error "Ошибка установки Xray.\nПодробности: $MAIN_LOG"
+        return 1
+    fi
+
+    # Обновляем protocols.json
+    local tmp="${PROTOCOLS_JSON}.tmp.$$"
+    jq --arg v "$version" '.xray.enabled = true | .xray.version = $v' \
+        "$PROTOCOLS_JSON" > "$tmp" && mv "$tmp" "$PROTOCOLS_JSON"
+
+    log_success "Xray $version установлен"
+    ui_success "Xray $version успешно установлен и запущен!\n\nКонфиг: $XRAY_CONFIG\nСервис: systemctl status $XRAY_SERVICE"
+}
+
+# --- Генерация конфига ---
+
+xray_generate_config() {
+    mkdir -p "$XRAY_CONFIG_DIR"
+    mkdir -p /var/log/xray
+
+    local port
+    port=$(jq -r '.xray.port // 443' "$PROTOCOLS_JSON" 2>/dev/null || echo "443")
+
+    # Случайный путь для XHTTP
+    local xhttp_path
+    xhttp_path="/$(openssl rand -hex 8)"
+
+    cat > "$XRAY_CONFIG" <<EOF
+{
+  "log": {
+    "loglevel": "warning",
+    "access": "/var/log/xray/access.log",
+    "error":  "/var/log/xray/error.log"
+  },
+  "inbounds": [
+    {
+      "port": $port,
+      "protocol": "vless",
+      "settings": {
+        "clients": [],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "xhttpSettings": {
+          "path": "$xhttp_path"
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls"]
+      }
+    }
+  ],
+  "outbounds": [
+    {"protocol": "freedom",   "tag": "direct"},
+    {"protocol": "blackhole", "tag": "blocked"}
+  ],
+  "routing": {
+    "rules": [
+      {
+        "type": "field",
+        "ip": ["geoip:private"],
+        "outboundTag": "blocked"
+      }
+    ]
+  }
+}
+EOF
+    log_info "Сгенерирован конфиг Xray: $XRAY_CONFIG (порт $port, путь $xhttp_path)"
+}
+
+# --- Управление сервисом ---
+
+xray_start_stop() {
+    if ! xray_is_installed; then
+        ui_error "Xray не установлен. Сначала выполните установку."
+        return
+    fi
+
+    if xray_is_running; then
+        if ui_confirm "Xray запущен. Остановить?"; then
+            systemctl stop "$XRAY_SERVICE"
+            log_info "Xray остановлен"
+            ui_success "Xray остановлен."
+        fi
+    else
+        if systemctl start "$XRAY_SERVICE"; then
+            log_info "Xray запущен"
+            ui_success "Xray запущен."
+        else
+            ui_error "Не удалось запустить Xray.\n\nПроверьте журнал:\njournalctl -u $XRAY_SERVICE -n 30"
+        fi
+    fi
+}
+
+xray_restart() {
+    if ! xray_is_installed; then
+        ui_error "Xray не установлен."
+        return
+    fi
+
+    if systemctl restart "$XRAY_SERVICE"; then
+        log_info "Xray перезапущен"
+        ui_success "Xray перезапущен."
+    else
+        ui_error "Не удалось перезапустить Xray.\n\nПроверьте: journalctl -u $XRAY_SERVICE -n 30"
+    fi
+}
+
+# --- Конфигурация ---
+
+xray_show_config() {
+    if [[ ! -f "$XRAY_CONFIG" ]]; then
+        ui_error "Конфиг не найден: $XRAY_CONFIG\n\nВыполните установку Xray."
+        return
+    fi
+    local config
+    config=$(cat "$XRAY_CONFIG")
+    ui_msgbox "$config" "Конфиг Xray ($XRAY_CONFIG)"
+}
+
+xray_change_port() {
+    if [[ ! -f "$XRAY_CONFIG" ]]; then
+        ui_error "Конфиг не найден. Сначала установите Xray."
+        return
+    fi
+
+    local current_port
+    current_port=$(jq -r '.xray.port // 443' "$PROTOCOLS_JSON")
+
+    local new_port
+    new_port=$(ui_input "Введите новый порт для Xray (текущий: $current_port):" \
+        "$current_port" "Изменить порт") || return
+    [[ -z "$new_port" ]] && return
+
+    if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [[ "$new_port" -lt 1 || "$new_port" -gt 65535 ]]; then
+        ui_error "Некорректный номер порта: $new_port\n\nДопустимый диапазон: 1-65535."
+        return
+    fi
+
+    if [[ "$new_port" != "$current_port" ]] && ! check_port_available "$new_port"; then
+        if ! ui_confirm "Порт $new_port уже занят другим процессом.\nПродолжить?"; then
+            return
+        fi
+    fi
+
+    # Обновляем конфиг Xray
+    local tmp="${XRAY_CONFIG}.tmp.$$"
+    jq --argjson p "$new_port" '(.inbounds[0].port) = $p' \
+        "$XRAY_CONFIG" > "$tmp" && mv "$tmp" "$XRAY_CONFIG"
+
+    # Обновляем protocols.json
+    tmp="${PROTOCOLS_JSON}.tmp.$$"
+    jq --argjson p "$new_port" '.xray.port = $p' \
+        "$PROTOCOLS_JSON" > "$tmp" && mv "$tmp" "$PROTOCOLS_JSON"
+
+    log_info "Порт Xray изменён: $current_port → $new_port"
+    xray_restart
+    ui_success "Порт Xray изменён на $new_port."
+}
+
+# --- Удаление ---
+
+xray_uninstall() {
+    if ! ui_confirm "Удалить Xray?\n\nСервис будет остановлен,\nбинарный файл и конфиг — удалены."; then
+        return
+    fi
+
+    systemctl stop    "$XRAY_SERVICE" 2>/dev/null || true
+    systemctl disable "$XRAY_SERVICE" 2>/dev/null || true
+    rm -f "$XRAY_BIN" "$XRAY_SYSTEMD_SERVICE_FILE"
+    systemctl daemon-reload
+
+    local tmp="${PROTOCOLS_JSON}.tmp.$$"
+    jq '.xray.enabled = false' "$PROTOCOLS_JSON" > "$tmp" && mv "$tmp" "$PROTOCOLS_JSON"
+
+    log_info "Xray удалён"
+    ui_success "Xray удалён."
+}
+
+# --- Главное меню Xray ---
+
+xray_manage() {
+    while true; do
+        # Динамическая строка статуса
+        local status_line="не установлен"
+        if xray_is_installed; then
+            if xray_is_running; then
+                status_line="запущен [●]"
+            else
+                status_line="остановлен [⏹]"
+            fi
+        fi
+
+        local choice
+        choice=$(ui_menu "Управление Xray — $status_line" \
+            "a" "Установить / обновить" \
+            "b" "Запустить / Остановить" \
+            "c" "Перезапустить" \
+            "d" "Просмотреть конфиг" \
+            "e" "Изменить порт" \
+            "f" "Удалить" \
+            "0" "Назад") || break
+
+        case "$choice" in
+            a) xray_install     ;;
+            b) xray_start_stop  ;;
+            c) xray_restart     ;;
+            d) xray_show_config ;;
+            e) xray_change_port ;;
+            f) xray_uninstall   ;;
+            0) return           ;;
+        esac
+    done
 }
