@@ -33,6 +33,10 @@ _setup_apply_certs() {
         fi
     fi
     users_sync_to_hysteria 2>/dev/null || true
+    
+    if singbox_is_installed; then
+        singbox_sync_users 2>/dev/null || true
+    fi
 }
 
 # ─── Определение IP ─────────────────────────────────────────────────────────

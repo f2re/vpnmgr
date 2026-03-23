@@ -40,10 +40,10 @@ _connection_vless_uri() {
         if [[ -n "$hostname" && "$hostname" != "null" ]]; then
             # Подключаемся по домену — правильный SNI, сертификат валиден
             connect_to="$hostname"
-            extra_params="&sni=${hostname}"
+            extra_params="&sni=${hostname}&flow=xtls-rprx-vision"
         else
             # Самоподписанный без домена — нужен insecure
-            extra_params="&allowInsecure=1"
+            extra_params="&allowInsecure=1&flow=xtls-rprx-vision"
         fi
     fi
 
