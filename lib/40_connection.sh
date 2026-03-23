@@ -40,11 +40,13 @@ _connection_vless_uri() {
         if [[ -n "$hostname" && "$hostname" != "null" ]]; then
             # Подключаемся по домену — правильный SNI, сертификат валиден
             connect_to="$hostname"
-            extra_params="&sni=${hostname}&flow=xtls-rprx-vision"
+            extra_params="&sni=${hostname}"
         else
             # Самоподписанный без домена — нужен insecure
-            extra_params="&allowInsecure=1&flow=xtls-rprx-vision"
+            extra_params="&allowInsecure=1"
         fi
+        # VLESS Vision требует TLS
+        extra_params="&flow=xtls-rprx-vision${extra_params}"
     fi
 
     printf 'vless://%s@%s:%s?encryption=none&security=%s&type=xhttp&path=%s%s#%s' \
