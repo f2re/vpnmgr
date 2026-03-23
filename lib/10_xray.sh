@@ -183,6 +183,7 @@ xray_generate_config() {
         tls_section=$(printf ',
       "tlsSettings": {
         "minVersion": "1.2",
+        "alpn": ["h2", "http/1.1"],
         "certificates": [
           {
             "certificateFile": "%s",
@@ -211,7 +212,8 @@ xray_generate_config() {
         "network": "xhttp",
         "security": "$security"${tls_section},
         "xhttpSettings": {
-          "path": "$xhttp_path"
+          "path": "$xhttp_path",
+          "mode": "stream-up"
         }
       },
       "sniffing": {

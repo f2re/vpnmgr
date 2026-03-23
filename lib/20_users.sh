@@ -144,7 +144,7 @@ users_sync_to_xray() {
     local clients
     clients=$(jq '[.users[] |
         select(.enabled == true and .protocols.vless.enabled == true) |
-        {"id": .protocols.vless.uuid, "email": .name}]' \
+        {"id": .protocols.vless.uuid, "flow": "xtls-rprx-vision", "email": .name}]' \
         "$USERS_JSON")
 
     local tmp="${XRAY_CONFIG}.tmp.$$"

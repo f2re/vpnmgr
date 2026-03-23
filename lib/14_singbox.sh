@@ -282,7 +282,7 @@ singbox_generate_config() {
             '. += [{
                 "type": "socks",
                 "tag": "socks-in",
-                "listen": "::",
+                "listen": "0.0.0.0",
                 "listen_port": $port,
                 "users": $users
             }]')
@@ -321,7 +321,7 @@ singbox_generate_config() {
             '. += [{
                 "type": "vless",
                 "tag": "vless-in",
-                "listen": "::",
+                "listen": "0.0.0.0",
                 "listen_port": $port,
                 "users": $users,
                 "tls": $tls
@@ -346,7 +346,7 @@ singbox_generate_config() {
             '. += [{
                 "type": "shadowsocks",
                 "tag": "ss-in",
-                "listen": "::",
+                "listen": "0.0.0.0",
                 "listen_port": $port,
                 "method": $method,
                 "password": $key,
@@ -385,7 +385,7 @@ singbox_generate_config() {
             '. += [{
                 "type": "hysteria2",
                 "tag": "hy2-in",
-                "listen": "::",
+                "listen": "0.0.0.0",
                 "listen_port": $port,
                 "users": $users,
                 "tls": $tls
