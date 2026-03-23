@@ -27,6 +27,19 @@ _socks5_get_port() {
     fi
 }
 
+socks5_get_port() {
+    local port
+    port=$(_socks5_get_port)
+    if [[ -z "$port" ]]; then
+        port=$(jq -r '.socks5.port // 1080' "$PROTOCOLS_JSON" 2>/dev/null || echo "1080")
+    fi
+    echo "$port"
+}
+
+socks5_is_enabled() {
+    jq -r '.socks5.enabled // false' "$PROTOCOLS_JSON" 2>/dev/null || echo "false"
+}
+
 socks5_is_installed() {
     [[ -x "$SOCKS5_BIN" ]]
 }
@@ -154,6 +167,11 @@ socks5_install() {
         return
     fi
 
+    # Обновляем protocols.json
+    local tmp="${PROTOCOLS_JSON}.tmp.$$"
+    jq --argjson p "$port" '.socks5.enabled = true | .socks5.port = $p' \
+        "$PROTOCOLS_JSON" > "$tmp" && mv "$tmp" "$PROTOCOLS_JSON"
+
     rm -f "$install_log"
     log_info "SOCKS5 (3proxy) установлен на порту $port"
     ui_success "SOCKS5 сервер установлен!\n\nПорт: $port\nАвторизация: username/password\n\nДобавьте пользователей через меню управления."
@@ -200,6 +218,10 @@ socks5_uninstall() {
     rm -rf "$SOCKS5_CONFIG_DIR"
     rm -f "$SOCKS5_USERS_JSON"
     rm -rf /var/log/3proxy
+
+    # Обновляем protocols.json
+    local tmp="${PROTOCOLS_JSON}.tmp.$$"
+    jq '.socks5.enabled = false' "$PROTOCOLS_JSON" > "$tmp" && mv "$tmp" "$PROTOCOLS_JSON"
 
     log_info "SOCKS5 (3proxy) удалён"
     ui_success "SOCKS5 сервер удалён."
@@ -263,7 +285,7 @@ socks5_change_port() {
     fi
 
     local current_port
-    current_port=$(_socks5_get_port)
+    current_port=$(socks5_get_port)
 
     local port
     port=$(ui_input "Новый порт SOCKS5:" "${current_port:-$SOCKS5_DEFAULT_PORT}" "Смена порта") || return
@@ -299,8 +321,18 @@ socks5_change_port() {
 
     socks5_write_config "$port"
 
+    # Обновляем protocols.json
+    local tmp="${PROTOCOLS_JSON}.tmp.$$"
+    jq --argjson p "$port" '.socks5.port = $p' "$PROTOCOLS_JSON" > "$tmp" && mv "$tmp" "$PROTOCOLS_JSON"
+
     if socks5_is_running; then
         systemctl restart "$SOCKS5_SERVICE" 2>/dev/null || true
+    fi
+
+    # Если Xray запущен — регенерируем конфиг
+    if xray_is_running 2>/dev/null; then
+        xray_generate_config
+        users_sync_to_xray 2>/dev/null || true
     fi
 
     log_info "SOCKS5: порт изменён с $current_port на $port"
@@ -389,7 +421,7 @@ socks5_user_add() {
     local server_ip
     server_ip=$(get_server_ip)
     local port
-    port=$(_socks5_get_port)
+    port=$(socks5_get_port)
 
     ui_success "Пользователь добавлен!\n\nЛогин:  $username\nПароль: $password\n\n--- Подключение ---\n\ncurl:\n  curl --socks5 $username:$password@$server_ip:$port https://example.com\n\nПеременная окружения:\n  export ALL_PROXY=socks5://$username:$password@$server_ip:$port"
 }
@@ -503,7 +535,7 @@ socks5_users_list() {
     local server_ip
     server_ip=$(get_server_ip)
     local port
-    port=$(_socks5_get_port)
+    port=$(socks5_get_port)
 
     info+="─────────────────────────────\n"
     info+="Сервер: $server_ip:$port\n"
@@ -538,7 +570,7 @@ socks5_user_show_connection() {
     local server_ip
     server_ip=$(get_server_ip)
     local port
-    port=$(_socks5_get_port)
+    port=$(socks5_get_port)
 
     local info
     info="Пользователь: $username\n"
@@ -578,7 +610,7 @@ socks5_show_status() {
     socks5_is_running && status_str="РАБОТАЕТ"
 
     local port
-    port=$(_socks5_get_port)
+    port=$(socks5_get_port)
 
     local server_ip
     server_ip=$(get_server_ip)
@@ -634,7 +666,7 @@ socks5_manage() {
         if socks5_is_installed; then
             if socks5_is_running; then
                 local port
-                port=$(_socks5_get_port)
+                port=$(socks5_get_port)
                 local count
                 _socks5_users_init
                 count=$(jq '.users | length' "$SOCKS5_USERS_JSON" 2>/dev/null)

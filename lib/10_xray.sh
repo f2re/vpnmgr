@@ -192,6 +192,30 @@ xray_generate_config() {
       }' "$cert_path" "$key_path")
     fi
 
+    # SOCKS5 inbound
+    local socks5_inbound=""
+    if [[ "$(jq -r '.socks5.enabled // false' "$PROTOCOLS_JSON" 2>/dev/null)" == "true" ]]; then
+        local s5_port
+        s5_port=$(jq -r '.socks5.port // 1080' "$PROTOCOLS_JSON" 2>/dev/null)
+        socks5_inbound=$(cat <<S5
+,
+    {
+      "port": $s5_port,
+      "listen": "0.0.0.0",
+      "protocol": "socks",
+      "settings": {
+        "auth": "noauth",
+        "udp": true
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls"]
+      }
+    }
+S5
+)
+    fi
+
     cat > "$XRAY_CONFIG" <<EOF
 {
   "log": {
@@ -218,7 +242,7 @@ xray_generate_config() {
         "enabled": true,
         "destOverride": ["http", "tls"]
       }
-    }
+    }${socks5_inbound}
   ],
   "outbounds": [
     {"protocol": "freedom",   "tag": "direct"},
