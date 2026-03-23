@@ -20,6 +20,7 @@ source "$BASE_DIR/lib/00_core.sh"
 source "$BASE_DIR/lib/01_utils.sh"
 source "$BASE_DIR/lib/02_checks.sh"
 source "$BASE_DIR/lib/03_ui.sh"
+source "$BASE_DIR/lib/05_setup.sh"
 source "$BASE_DIR/lib/10_xray.sh"
 source "$BASE_DIR/lib/11_hysteria.sh"
 source "$BASE_DIR/lib/12_amnezia.sh"
@@ -123,30 +124,43 @@ main_menu() {
         # Актуальная информация для шапки
         local user_count=0
         [[ -f "$USERS_JSON" ]] && user_count=$(jq '.users | length' "$USERS_JSON" 2>/dev/null || echo 0)
-        local server_ip
-        server_ip=$(jq -r '.ip // ""' "$SERVER_JSON" 2>/dev/null || echo "")
+
+        local server_ip hostname tls_badge
+        server_ip=$(jq -r '.ip // ""'       "$SERVER_JSON" 2>/dev/null || echo "")
+        hostname=$(jq -r  '.hostname // ""' "$SERVER_JSON" 2>/dev/null || echo "")
         [[ -z "$server_ip" ]] && server_ip="не задан"
 
-        local header="Сервер: $server_ip | Пользователей: $user_count"
+        local cert_path
+        cert_path=$(jq -r '.cert_path // ""' "$SERVER_JSON" 2>/dev/null || echo "")
+        tls_badge="[no TLS]"
+        if [[ -n "$cert_path" && "$cert_path" != "null" && -f "$cert_path" ]]; then
+            [[ "$cert_path" == *letsencrypt*    ]] && tls_badge="[LE TLS]"
+            [[ "$cert_path" == */vpnmgr/certs/* ]] && tls_badge="[self TLS]"
+            [[ "$tls_badge" == "[no TLS]" ]]       && tls_badge="[TLS]"
+        fi
+
+        local display="${hostname:-$server_ip} $tls_badge | users: $user_count"
 
         local choice
-        choice=$(ui_menu "$header" \
+        choice=$(ui_menu "$display" \
+            "0" "Настройка сервера (IP, домен, TLS)" \
             "1" "Статус системы" \
             "2" "Протоколы" \
             "3" "Пользователи" \
             "4" "Мониторинг и логи" \
             "5" "Бэкап и восстановление" \
             "6" "Обновления" \
-            "0" "Выход") || break
+            "q" "Выход") || break
 
         case "$choice" in
-            1) monitor_status  || true ;;
-            2) protocols_menu  || true ;;
-            3) user_manage     || true ;;
-            4) monitor_manage  || true ;;
-            5) backup_manage   || true ;;
-            6) updater_manage  || true ;;
-            0|*) exit 0        ;;
+            0) setup_server_menu || true ;;
+            1) monitor_status    || true ;;
+            2) protocols_menu    || true ;;
+            3) user_manage       || true ;;
+            4) monitor_manage    || true ;;
+            5) backup_manage     || true ;;
+            6) updater_manage    || true ;;
+            q|*) exit 0 ;;
         esac
     done
 }
@@ -180,6 +194,11 @@ PJSON
 
     check_terminal_size
     log_info "Запуск vpnmgr v$VPNMGR_VERSION"
+
+    # Автоматически запускаем мастер при первом старте (IP не задан)
+    if [[ "$OSTYPE" == "linux-gnu"* ]] && setup_needs_wizard; then
+        setup_wizard
+    fi
 }
 
 init

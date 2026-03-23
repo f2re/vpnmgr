@@ -161,9 +161,36 @@ xray_generate_config() {
     local port
     port=$(jq -r '.xray.port // 443' "$PROTOCOLS_JSON" 2>/dev/null || echo "443")
 
-    # Случайный путь для XHTTP
-    local xhttp_path
-    xhttp_path="/$(openssl rand -hex 8)"
+    # Сохраняем существующий путь если конфиг уже есть
+    local xhttp_path=""
+    if [[ -f "$XRAY_CONFIG" ]]; then
+        xhttp_path=$(jq -r \
+            '.inbounds[0].streamSettings.xhttpSettings.path // ""' \
+            "$XRAY_CONFIG" 2>/dev/null || echo "")
+    fi
+    [[ -z "$xhttp_path" ]] && xhttp_path="/$(openssl rand -hex 8)"
+
+    # TLS: берём сертификат из server.json
+    local cert_path key_path
+    cert_path=$(jq -r '.cert_path // ""' "$SERVER_JSON" 2>/dev/null || echo "")
+    key_path=$(jq -r  '.key_path  // ""' "$SERVER_JSON" 2>/dev/null || echo "")
+
+    local security="none"
+    local tls_section=""
+
+    if [[ -n "$cert_path" && -n "$key_path" && -f "$cert_path" && -f "$key_path" ]]; then
+        security="tls"
+        tls_section=$(printf ',
+      "tlsSettings": {
+        "minVersion": "1.2",
+        "certificates": [
+          {
+            "certificateFile": "%s",
+            "keyFile": "%s"
+          }
+        ]
+      }' "$cert_path" "$key_path")
+    fi
 
     cat > "$XRAY_CONFIG" <<EOF
 {
@@ -182,6 +209,7 @@ xray_generate_config() {
       },
       "streamSettings": {
         "network": "xhttp",
+        "security": "$security"${tls_section},
         "xhttpSettings": {
           "path": "$xhttp_path"
         }
@@ -207,7 +235,7 @@ xray_generate_config() {
   }
 }
 EOF
-    log_info "Сгенерирован конфиг Xray: $XRAY_CONFIG (порт $port, путь $xhttp_path)"
+    log_info "Сгенерирован конфиг Xray: $XRAY_CONFIG (порт=$port, путь=$xhttp_path, TLS=$security)"
 }
 
 # --- Управление сервисом ---

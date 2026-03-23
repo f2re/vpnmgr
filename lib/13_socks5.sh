@@ -215,8 +215,6 @@ socks5_write_config() {
 
     cat > "$SOCKS5_CONFIG" <<EOF
 # 3proxy configuration
-daemon
-pidfile $SOCKS5_PID_FILE
 
 # Логирование
 log $SOCKS5_LOG D

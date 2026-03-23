@@ -26,8 +26,29 @@ _connection_vless_uri() {
             "$XRAY_CONFIG" 2>/dev/null || echo "/")
     fi
 
-    printf 'vless://%s@%s:%s?encryption=none&type=xhttp&path=%s#%s' \
-        "$uuid" "$server_ip" "$port" "$xhttp_path" "$user_name"
+    # Определяем security: tls если сертификат настроен
+    local security="none"
+    local extra_params=""
+    local connect_to="$server_ip"
+
+    local cert_path hostname
+    cert_path=$(jq -r '.cert_path // ""' "$SERVER_JSON" 2>/dev/null || echo "")
+    hostname=$(jq -r '.hostname // ""' "$SERVER_JSON" 2>/dev/null || echo "")
+
+    if [[ -n "$cert_path" && -f "$cert_path" ]]; then
+        security="tls"
+        if [[ -n "$hostname" && "$hostname" != "null" ]]; then
+            # Подключаемся по домену — правильный SNI, сертификат валиден
+            connect_to="$hostname"
+            extra_params="&sni=${hostname}"
+        else
+            # Самоподписанный без домена — нужен insecure
+            extra_params="&allowInsecure=1"
+        fi
+    fi
+
+    printf 'vless://%s@%s:%s?encryption=none&security=%s&type=xhttp&path=%s%s#%s' \
+        "$uuid" "$connect_to" "$port" "$security" "$xhttp_path" "$extra_params" "$user_name"
 }
 
 # Генерирует Hysteria2 URI для пользователя
@@ -47,8 +68,15 @@ _connection_hysteria2_uri() {
     local port
     port=$(jq -r '.hysteria2.port // 8443' "$PROTOCOLS_JSON" 2>/dev/null || echo "8443")
 
-    printf 'hysteria2://%s:%s@%s:%s?insecure=1#%s' \
-        "$user_name" "$password" "$server_ip" "$port" "$user_name"
+    local obfs obfs_password obfs_params=""
+    obfs=$(jq -r '.hysteria2.obfs // ""' "$PROTOCOLS_JSON" 2>/dev/null || echo "")
+    obfs_password=$(jq -r '.hysteria2.obfs_password // ""' "$PROTOCOLS_JSON" 2>/dev/null || echo "")
+    if [[ "$obfs" == "salamander" && -n "$obfs_password" ]]; then
+        obfs_params="&obfs=salamander&obfs-password=${obfs_password}"
+    fi
+
+    printf 'hysteria2://%s:%s@%s:%s?insecure=1%s#%s' \
+        "$user_name" "$password" "$server_ip" "$port" "$obfs_params" "$user_name"
 }
 
 # Показывает QR-код в терминале
