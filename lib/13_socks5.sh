@@ -236,7 +236,7 @@ socks5_write_config() {
     log_info "SOCKS5: запись $SOCKS5_CONFIG (порт $port)"
 
     cat > "$SOCKS5_CONFIG" <<EOF
-# 3proxy configuration
+pidfile $SOCKS5_PID_FILE
 
 # Сеть
 nserver 8.8.8.8
@@ -252,7 +252,7 @@ rotate 30
 
 # Авторизация через файл паролей
 auth strong
-users \$/etc/3proxy/passwd
+users \$$SOCKS5_PASSWD_FILE
 
 # Разрешаем всем аутентифицированным пользователям
 allow *
@@ -260,7 +260,6 @@ allow *
 # SOCKS5 прокси
 socks -p${port} -i0.0.0.0 -e0.0.0.0
 
-# Сброс
 flush
 EOF
     log_info "SOCKS5: конфигурация записана (порт $port)"
