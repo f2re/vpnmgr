@@ -238,15 +238,17 @@ socks5_write_config() {
     cat > "$SOCKS5_CONFIG" <<EOF
 # 3proxy configuration
 
+# Сеть
+nserver 8.8.8.8
+nscache 65536
+nscache6 65536
+timeouts 1 5 30 60 180 1800 15 60
+maxconn 300
+
 # Логирование
 log $SOCKS5_LOG D
 logformat "L%d-%m-%Y %H:%M:%S %N.%p %E %C:%c %R:%r %O %I %h %T"
 rotate 30
-
-# Безопасность
-nscache 65536
-nscache6 65536
-timeouts 1 5 30 60 180 1800 15 60
 
 # Авторизация через файл паролей
 auth strong
@@ -256,7 +258,10 @@ users \$/etc/3proxy/passwd
 allow *
 
 # SOCKS5 прокси
-socks -p${port}
+socks -p${port} -i0.0.0.0 -e0.0.0.0
+
+# Сброс
+flush
 EOF
     log_info "SOCKS5: конфигурация записана (порт $port)"
 }
