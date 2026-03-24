@@ -98,7 +98,7 @@ _setup_tls_letsencrypt() {
     # Автопродление через cron
     if ! crontab -l 2>/dev/null | grep -q "certbot renew"; then
         (crontab -l 2>/dev/null; \
-         echo "0 3 * * * certbot renew --quiet --post-hook 'systemctl restart xray hysteria 2>/dev/null || true'") \
+         echo "0 3 * * * certbot renew --quiet --post-hook 'systemctl restart xray hysteria sing-box 2>/dev/null || true'") \
         | crontab -
         log_info "Автопродление certbot добавлено в cron"
     fi

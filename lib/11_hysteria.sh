@@ -78,7 +78,8 @@ hysteria_install() {
 [Unit]
 Description=Hysteria 2 Service
 Documentation=https://hysteria.network
-After=network.target nss-lookup.target
+After=network-online.target nss-lookup.target
+Wants=network-online.target
 
 [Service]
 User=root

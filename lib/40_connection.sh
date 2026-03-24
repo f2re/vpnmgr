@@ -38,15 +38,12 @@ _connection_vless_uri() {
     if [[ -n "$cert_path" && -f "$cert_path" ]]; then
         security="tls"
         if [[ -n "$hostname" && "$hostname" != "null" ]]; then
-            # Подключаемся по домену — правильный SNI, сертификат валиден
             connect_to="$hostname"
             extra_params="&sni=${hostname}"
         else
-            # Самоподписанный без домена — нужен insecure
             extra_params="&allowInsecure=1"
         fi
-        # VLESS Vision требует TLS
-        extra_params="&flow=xtls-rprx-vision${extra_params}"
+        # NB: flow НЕ указываем — xtls-rprx-vision несовместим с xhttp транспортом
     fi
 
     printf 'vless://%s@%s:%s?encryption=none&security=%s&type=xhttp&path=%s%s#%s' \
@@ -119,7 +116,6 @@ connection_show() {
         return 1
     fi
 
-    # Проверяем что пользователь существует
     if ! jq -e --arg n "$user_name" '.users[] | select(.name == $n)' \
             "$USERS_JSON" >/dev/null 2>&1; then
         ui_error "Пользователь '$user_name' не найден."
@@ -130,77 +126,131 @@ connection_show() {
     vless_uri=$(_connection_vless_uri    "$user_name" 2>/dev/null || echo "")
     hysteria_uri=$(_connection_hysteria2_uri "$user_name" 2>/dev/null || echo "")
 
-    # Проверяем AmneziaWG пир
     local amnezia_conf=""
     local amnezia_peer_dir="/etc/amneziawg/peers/$user_name"
     if [[ -f "$amnezia_peer_dir/client.conf" ]]; then
         amnezia_conf="$amnezia_peer_dir/client.conf"
     fi
 
-    # Строим сообщение
-    local msg="=== Подключение: $user_name ===\n\n"
+    # Собираем пункты меню действий
+    local menu_items=()
+    [[ -n "$vless_uri" ]]    && menu_items+=("v" "Показать VLESS+XHTTP ссылку")
+    [[ -n "$hysteria_uri" ]] && menu_items+=("h" "Показать Hysteria 2 ссылку")
+    [[ -n "$amnezia_conf" ]] && menu_items+=("a" "Показать AmneziaWG конфиг")
 
-    if [[ -n "$vless_uri" ]]; then
-        msg+="VLESS+XHTTP:\n$vless_uri\n\n"
-    else
-        msg+="VLESS: нет данных (Xray не настроен?)\n\n"
-    fi
-
-    if [[ -n "$hysteria_uri" ]]; then
-        msg+="Hysteria 2:\n$hysteria_uri\n\n"
-    else
-        msg+="Hysteria 2: нет данных (Hysteria не настроена?)\n\n"
-    fi
-
-    if [[ -n "$amnezia_conf" ]]; then
-        msg+="AmneziaWG: конфиг доступен (показать через QR)"
-    else
-        msg+="AmneziaWG: пир не создан"
-    fi
-
-    ui_msgbox "$msg" "Подключение: $user_name"
-
-    # Предлагаем QR
     local has_qr=false
     is_installed "qrencode" && has_qr=true
 
-    if $has_qr && [[ -n "$vless_uri" || -n "$hysteria_uri" || -n "$amnezia_conf" ]]; then
-        # Собираем доступные варианты QR
-        local qr_items=()
-        [[ -n "$vless_uri" ]]    && qr_items+=("1" "QR для VLESS+XHTTP")
-        [[ -n "$hysteria_uri" ]] && qr_items+=("2" "QR для Hysteria 2")
-        [[ -n "$amnezia_conf" ]] && qr_items+=("3" "QR для AmneziaWG")
-        qr_items+=("0" "Назад")
+    if $has_qr; then
+        [[ -n "$vless_uri" ]]    && menu_items+=("1" "QR-код VLESS+XHTTP")
+        [[ -n "$hysteria_uri" ]] && menu_items+=("2" "QR-код Hysteria 2")
+        [[ -n "$amnezia_conf" ]] && menu_items+=("3" "QR-код AmneziaWG")
+    fi
 
-        local qr_choice
-        qr_choice=$(ui_menu "Показать QR-код:" "${qr_items[@]}") || return
+    [[ -n "$vless_uri" || -n "$hysteria_uri" ]] && menu_items+=("c" "Все ссылки в терминал (для копирования)")
+    menu_items+=("0" "Назад")
 
-        clear
-        case "$qr_choice" in
+    if [[ ${#menu_items[@]} -eq 2 ]]; then
+        # Только кнопка "Назад" — ничего не настроено
+        ui_msgbox "Нет доступных протоколов для '$user_name'.\n\nУстановите и настройте протоколы через меню." \
+            "Подключение: $user_name"
+        return
+    fi
+
+    while true; do
+        local choice
+        choice=$(ui_menu "Подключение: $user_name" "${menu_items[@]}") || return
+
+        case "$choice" in
+            v)
+                _connection_show_uri_in_terminal "$vless_uri" "VLESS+XHTTP" "$user_name"
+                ;;
+            h)
+                _connection_show_uri_in_terminal "$hysteria_uri" "Hysteria 2" "$user_name"
+                ;;
+            a)
+                clear
+                echo "═══ AmneziaWG — $user_name ═══"
+                echo ""
+                cat "$amnezia_conf"
+                echo ""
+                echo "───────────────────────────────────"
+                echo "Нажмите Enter для возврата..."
+                read -r
+                ;;
             1)
-                if [[ -n "$vless_uri" ]]; then
-                    _show_qr "$vless_uri" "VLESS+XHTTP — $user_name"
-                    echo "URI: $vless_uri"
-                fi
+                clear
+                _show_qr "$vless_uri" "VLESS+XHTTP — $user_name"
+                echo ""
+                echo "Нажмите Enter для возврата..."
+                read -r
                 ;;
             2)
-                if [[ -n "$hysteria_uri" ]]; then
-                    _show_qr "$hysteria_uri" "Hysteria 2 — $user_name"
-                    echo "URI: $hysteria_uri"
-                fi
+                clear
+                _show_qr "$hysteria_uri" "Hysteria 2 — $user_name"
+                echo ""
+                echo "Нажмите Enter для возврата..."
+                read -r
                 ;;
             3)
-                if [[ -n "$amnezia_conf" ]]; then
-                    _show_qr_file "$amnezia_conf" "AmneziaWG — $user_name"
-                    echo ""
-                    cat "$amnezia_conf"
-                fi
+                clear
+                _show_qr_file "$amnezia_conf" "AmneziaWG — $user_name"
+                echo ""
+                echo "Нажмите Enter для возврата..."
+                read -r
+                ;;
+            c)
+                _connection_print_all_uris "$user_name" "$vless_uri" "$hysteria_uri"
                 ;;
             0) return ;;
         esac
+    done
+}
 
-        echo ""
-        echo "Нажмите Enter для возврата в меню..."
-        read -r
+# Показывает одну URI в терминале для удобного копирования
+_connection_show_uri_in_terminal() {
+    local uri="$1" label="$2" user_name="$3"
+    clear
+    echo "═══ $label — $user_name ═══"
+    echo ""
+    echo "Скопируйте ссылку ниже (выделите мышью или тройной клик):"
+    echo ""
+    echo "────────────────────────────────────────"
+    echo "$uri"
+    echo "────────────────────────────────────────"
+    echo ""
+    # Попытка скопировать в буфер обмена
+    if command -v xclip >/dev/null 2>&1; then
+        printf '%s' "$uri" | xclip -selection clipboard 2>/dev/null && echo "[Скопировано в буфер обмена]"
+    elif command -v xsel >/dev/null 2>&1; then
+        printf '%s' "$uri" | xsel --clipboard 2>/dev/null && echo "[Скопировано в буфер обмена]"
+    elif command -v pbcopy >/dev/null 2>&1; then
+        printf '%s' "$uri" | pbcopy 2>/dev/null && echo "[Скопировано в буфер обмена]"
     fi
+    echo ""
+    echo "Нажмите Enter для возврата..."
+    read -r
+}
+
+# Выводит все ссылки в терминал
+_connection_print_all_uris() {
+    local user_name="$1" vless_uri="$2" hysteria_uri="$3"
+    clear
+    echo "═══ Все ссылки подключения: $user_name ═══"
+    echo ""
+    if [[ -n "$vless_uri" ]]; then
+        echo "── VLESS+XHTTP ──"
+        echo "$vless_uri"
+        echo ""
+    fi
+    if [[ -n "$hysteria_uri" ]]; then
+        echo "── Hysteria 2 ──"
+        echo "$hysteria_uri"
+        echo ""
+    fi
+    echo "────────────────────────────────────────"
+    echo "Выделите нужную ссылку мышью для копирования."
+    echo ""
+    echo "Нажмите Enter для возврата..."
+    read -r
 }

@@ -142,9 +142,10 @@ users_sync_to_xray() {
 
     # Строим массив клиентов: только активные пользователи с включённым VLESS
     local clients
+    # NB: flow НЕ указываем — xtls-rprx-vision несовместим с xhttp транспортом
     clients=$(jq '[.users[] |
         select(.enabled == true and .protocols.vless.enabled == true) |
-        {"id": .protocols.vless.uuid, "flow": "xtls-rprx-vision", "email": .name}]' \
+        {"id": .protocols.vless.uuid, "email": .name}]' \
         "$USERS_JSON")
 
     local tmp="${XRAY_CONFIG}.tmp.$$"

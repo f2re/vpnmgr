@@ -181,7 +181,8 @@ _socks5_create_systemd_service() {
     cat > /etc/systemd/system/3proxy.service <<EOF
 [Unit]
 Description=3proxy - tiny free proxy server
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple

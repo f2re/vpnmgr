@@ -90,7 +90,8 @@ xray_install() {
 [Unit]
 Description=Xray Service
 Documentation=https://github.com/XTLS/Xray-core
-After=network.target nss-lookup.target
+After=network-online.target nss-lookup.target
+Wants=network-online.target
 
 [Service]
 User=root
@@ -200,6 +201,13 @@ xray_generate_config() {
     "access": "/var/log/xray/access.log",
     "error":  "/var/log/xray/error.log"
   },
+  "dns": {
+    "servers": [
+      "https+local://1.1.1.1/dns-query",
+      "8.8.8.8",
+      "localhost"
+    ]
+  },
   "inbounds": [
     {
       "port": $port,
@@ -212,21 +220,21 @@ xray_generate_config() {
         "network": "xhttp",
         "security": "$security"${tls_section},
         "xhttpSettings": {
-          "path": "$xhttp_path",
-          "mode": "stream-up"
+          "path": "$xhttp_path"
         }
       },
       "sniffing": {
         "enabled": true,
-        "destOverride": ["http", "tls"]
+        "destOverride": ["http", "tls", "quic"]
       }
     }
   ],
   "outbounds": [
-    {"protocol": "freedom",   "tag": "direct"},
+    {"protocol": "freedom", "tag": "direct"},
     {"protocol": "blackhole", "tag": "blocked"}
   ],
   "routing": {
+    "domainStrategy": "AsIs",
     "rules": [
       {
         "type": "field",
