@@ -3,8 +3,8 @@ tls:
   cert: {{CERT_PATH}}
   key: {{KEY_PATH}}
 auth:
-  type: password
-  password:
+  type: userpass
+  userpass:
     {{CLIENTS}}
 masquerade:
   type: proxy

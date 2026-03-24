@@ -74,8 +74,20 @@ _connection_hysteria2_uri() {
         obfs_params="&obfs=salamander&obfs-password=${obfs_password}"
     fi
 
-    printf 'hysteria2://%s:%s@%s:%s?insecure=1%s#%s' \
-        "$user_name" "$password" "$server_ip" "$port" "$obfs_params" "$user_name"
+    # Port hopping: добавляем mport если включён
+    local mport_params=""
+    local ph_enabled
+    ph_enabled=$(jq -r '.hysteria2.port_hopping // false' "$PROTOCOLS_JSON" 2>/dev/null || echo "false")
+    if [[ "$ph_enabled" == "true" ]]; then
+        local ph_range
+        ph_range=$(jq -r '.hysteria2.port_hopping_range // ""' "$PROTOCOLS_JSON" 2>/dev/null || echo "")
+        if [[ -n "$ph_range" ]]; then
+            mport_params="&mport=${ph_range}"
+        fi
+    fi
+
+    printf 'hysteria2://%s:%s@%s:%s/?insecure=1%s%s#%s' \
+        "$user_name" "$password" "$server_ip" "$port" "$obfs_params" "$mport_params" "$user_name"
 }
 
 # Показывает QR-код в терминале

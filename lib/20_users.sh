@@ -186,8 +186,16 @@ users_sync_to_hysteria() {
     local port masquerade_url obfs obfs_password
     port=$(jq -r '.hysteria2.port // 8443' "$PROTOCOLS_JSON" 2>/dev/null)
     masquerade_url=$(jq -r '.hysteria2.masquerade_url // "https://www.google.com"' "$PROTOCOLS_JSON" 2>/dev/null)
-    obfs=$(jq -r '.hysteria2.obfs // ""' "$PROTOCOLS_JSON" 2>/dev/null)
+    obfs=$(jq -r '.hysteria2.obfs // "salamander"' "$PROTOCOLS_JSON" 2>/dev/null)
     obfs_password=$(jq -r '.hysteria2.obfs_password // ""' "$PROTOCOLS_JSON" 2>/dev/null)
+
+    # Генерируем пароль обфускации если salamander включён но пароль пуст
+    if [[ "$obfs" == "salamander" && -z "$obfs_password" ]]; then
+        obfs_password=$(gen_password)
+        local pw_tmp="${PROTOCOLS_JSON}.tmp.$$"
+        jq --arg p "$obfs_password" '.hysteria2.obfs_password = $p' \
+            "$PROTOCOLS_JSON" > "$pw_tmp" && mv "$pw_tmp" "$PROTOCOLS_JSON"
+    fi
 
     # Путь к сертификатам
     local cert_path key_path
