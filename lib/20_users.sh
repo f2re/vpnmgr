@@ -63,7 +63,97 @@ user_add() {
     users_sync_to_xray
     users_sync_to_hysteria
 
-    ui_success "Пользователь '$name' добавлен!\n\nVLESS UUID: $uuid\nHysteria2 пароль: $password\n\nИспользуйте меню 'Инструкции подключения' для получения QR-кода."
+    # Авто-создание AmneziaWG пира если протокол установлен
+    local awg_note=""
+    if amnezia_is_installed 2>/dev/null && [[ -f "$AMNEZIA_CONFIG" ]]; then
+        if [[ ! -d "$AMNEZIA_CONFIG_DIR/peers/$name" ]]; then
+            _users_auto_create_awg_peer "$name" && \
+                awg_note="\nAmneziaWG пир: создан автоматически"
+        fi
+    fi
+
+    ui_success "Пользователь '$name' добавлен!\n\nVLESS UUID: $uuid\nHysteria2 пароль: $password${awg_note}\n\nИспользуйте меню 'Инструкции подключения' для получения QR-кода."
+}
+
+# Автоматическое создание AmneziaWG пира при добавлении пользователя
+_users_auto_create_awg_peer() {
+    local peer_name="$1"
+    local peer_dir="$AMNEZIA_CONFIG_DIR/peers/$peer_name"
+
+    [[ -d "$peer_dir" ]] && return 0
+    mkdir -p "$peer_dir"
+
+    local peer_privkey peer_pubkey peer_psk
+    peer_privkey=$(awg genkey 2>/dev/null || wg genkey 2>/dev/null) || return 1
+    peer_pubkey=$(echo "$peer_privkey" | awg pubkey 2>/dev/null || echo "$peer_privkey" | wg pubkey 2>/dev/null)
+    peer_psk=$(awg genpsk 2>/dev/null || wg genpsk 2>/dev/null)
+
+    local next_ip
+    next_ip=$(_amnezia_next_ip)
+
+    echo "$peer_privkey" > "$peer_dir/privkey"
+    echo "$peer_pubkey"  > "$peer_dir/pubkey"
+    echo "$peer_psk"     > "$peer_dir/psk"
+    echo "$next_ip"      > "$peer_dir/ip"
+    chmod 600 "$peer_dir/privkey" "$peer_dir/psk"
+
+    # Добавляем в серверный конфиг
+    cat >> "$AMNEZIA_CONFIG" <<EOF
+
+# Peer: $peer_name
+[Peer]
+PublicKey = $peer_pubkey
+PresharedKey = $peer_psk
+AllowedIPs = ${next_ip}/32
+EOF
+
+    # Генерируем клиентский конфиг
+    local server_ip server_pubkey port
+    server_ip=$(get_server_ip)
+    server_pubkey=$(cat "$AMNEZIA_CONFIG_DIR/server_pubkey" 2>/dev/null)
+    port=$(jq -r '.amneziawg.port // 51820' "$PROTOCOLS_JSON" 2>/dev/null || echo "51820")
+
+    local jc jmin jmax s1 s2 h1 h2 h3 h4
+    jc=$(grep "^Jc" "$AMNEZIA_CONFIG" | head -1 | awk '{print $3}')
+    jmin=$(grep "^Jmin" "$AMNEZIA_CONFIG" | head -1 | awk '{print $3}')
+    jmax=$(grep "^Jmax" "$AMNEZIA_CONFIG" | head -1 | awk '{print $3}')
+    s1=$(grep "^S1" "$AMNEZIA_CONFIG" | head -1 | awk '{print $3}')
+    s2=$(grep "^S2" "$AMNEZIA_CONFIG" | head -1 | awk '{print $3}')
+    h1=$(grep "^H1" "$AMNEZIA_CONFIG" | head -1 | awk '{print $3}')
+    h2=$(grep "^H2" "$AMNEZIA_CONFIG" | head -1 | awk '{print $3}')
+    h3=$(grep "^H3" "$AMNEZIA_CONFIG" | head -1 | awk '{print $3}')
+    h4=$(grep "^H4" "$AMNEZIA_CONFIG" | head -1 | awk '{print $3}')
+
+    cat > "$peer_dir/client.conf" <<EOF
+[Interface]
+PrivateKey = $peer_privkey
+Address = ${next_ip}/32
+DNS = 1.1.1.1, 8.8.8.8
+Jc = $jc
+Jmin = $jmin
+Jmax = $jmax
+S1 = $s1
+S2 = $s2
+H1 = $h1
+H2 = $h2
+H3 = $h3
+H4 = $h4
+
+[Peer]
+PublicKey = $server_pubkey
+PresharedKey = $peer_psk
+Endpoint = ${server_ip}:${port}
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+EOF
+
+    # Перезагружаем интерфейс если запущен
+    if amnezia_is_running 2>/dev/null; then
+        awg-quick down "$AMNEZIA_INTERFACE" 2>/dev/null || true
+        awg-quick up "$AMNEZIA_INTERFACE" 2>/dev/null || true
+    fi
+
+    log_info "Авто-создан AmneziaWG пир: $peer_name ($next_ip)"
 }
 
 user_delete() {
@@ -97,7 +187,46 @@ user_delete() {
     log_success "Удалён пользователь: $name"
     users_sync_to_xray
     users_sync_to_hysteria
+
+    # Удаляем AmneziaWG пир если существует
+    _users_auto_remove_awg_peer "$name"
+
     ui_success "Пользователь '$name' удалён."
+}
+
+# Автоматическое удаление AmneziaWG пира при удалении пользователя
+_users_auto_remove_awg_peer() {
+    local peer_name="$1"
+    local peer_dir="$AMNEZIA_CONFIG_DIR/peers/$peer_name"
+
+    [[ ! -d "$peer_dir" ]] && return 0
+    [[ ! -f "$AMNEZIA_CONFIG" ]] && return 0
+
+    # Удаляем блок пира из серверного конфига
+    local tmp="${AMNEZIA_CONFIG}.tmp.$$"
+    awk -v peer="# Peer: ${peer_name}" '
+        $0 == peer { skip=1; next }
+        skip && /^# Peer: / { skip=0 }
+        skip && /^\[Peer\]/ { next }
+        skip && /^[A-Za-z]/ { next }
+        skip && /^$/ { next }
+        !skip { print }
+    ' "$AMNEZIA_CONFIG" > "$tmp"
+
+    if [[ -s "$tmp" ]]; then
+        mv "$tmp" "$AMNEZIA_CONFIG"
+    else
+        rm -f "$tmp"
+    fi
+
+    rm -rf "$peer_dir"
+
+    if amnezia_is_running 2>/dev/null; then
+        awg-quick down "$AMNEZIA_INTERFACE" 2>/dev/null || true
+        awg-quick up "$AMNEZIA_INTERFACE" 2>/dev/null || true
+    fi
+
+    log_info "Авто-удалён AmneziaWG пир: $peer_name"
 }
 
 user_toggle() {
